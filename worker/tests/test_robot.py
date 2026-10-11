@@ -176,7 +176,8 @@ def test_migracion_de_ritmo_se_aplica_una_vez():
         "ajustes": [],
     })
     run.migrar_datos(db)
-    assert {f["fuente"]: f["intervalo_min"] for f in db.leer("estado_fuentes")} == {"google_flights": 5, "ryanair": 30}
+    assert {f["fuente"]: f["intervalo_min"] for f in db.leer("estado_fuentes")} == {"google_flights": 2, "ryanair": 10}
+    assert db.leer("estado_fuentes", fuente="eq.ryanair")[0]["max_peticiones"] == 1
     db.actualizar("estado_fuentes", {"fuente": "eq.google_flights"}, {"intervalo_min": 77})  # cambio manual
     run.migrar_datos(db)
     assert db.leer("estado_fuentes", fuente="eq.google_flights")[0]["intervalo_min"] == 77  # no se pisa

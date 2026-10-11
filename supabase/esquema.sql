@@ -338,10 +338,10 @@ create policy "ejecuciones: leer" on public.ejecuciones
 insert into public.estado_fuentes
   (fuente, nombre, activa, intervalo_min, pausa_min_s, pausa_max_s, max_peticiones, descripcion)
 values
-  ('google_flights', 'Google Flights', true, 5, 6, 16, 60,
-   'Fuente principal: compara casi todas las aerolíneas (Ryanair, Vueling, Iberia, easyJet...). Cada búsqueda se revisa cada 20-90 min según lo cerca que esté el viaje; 6-16 s entre peticiones.'),
-  ('ryanair', 'Ryanair (web oficial)', true, 30, 120, 140, 3,
-   'Confirma el precio en la propia Ryanair. Una ronda cada 30 min como mucho; 2 min entre peticiones (el doble de lo recomendado).'),
+  ('google_flights', 'Google Flights', true, 2, 6, 16, 60,
+   'Fuente principal: compara casi todas las aerolíneas (Ryanair, Vueling, Iberia, easyJet...). Cada búsqueda se revisa cada 20 min; 6-16 s entre peticiones.'),
+  ('ryanair', 'Ryanair (web oficial)', true, 10, 120, 140, 1,
+   'Confirma el precio en la propia Ryanair. Una consulta cada 10 min como mucho (menos de lo que recomiendan).'),
   ('skyscanner', 'Skyscanner', false, 740, 30, 60, 2,
    'Desactivada: Skyscanner bloquea a los robots desde la primera petición (prueba del 6/10/2026). Puedes activarla para reintentar; si bloquea, el robot la deja descansar.')
 on conflict (fuente) do update set

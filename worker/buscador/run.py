@@ -48,21 +48,26 @@ ATENCION_ESPERA_S = 10  # en modo continuo, Telegram y las pruebas de la web se 
 LATIDO_CADA_S = 60
 PRIMERA_REVISION_MIN = 2  # una búsqueda nueva se mira en cuanto la web lleve 2 min sin consultarse
 LIMPIEZA_CADA = timedelta(hours=6)
-VERSION_DATOS = 2
+VERSION_DATOS = 3
 
 # Ritmo de cada web en modo continuo (minutos entre rondas). Lo que de verdad marca el ritmo es
-# cada búsqueda (cada 20-90 min, ver decision.py) y las pausas entre peticiones.
+# cada búsqueda (cada 20 min, ver decision.py) y las pausas entre peticiones.
 # Se aplica una sola vez a la base de datos (VERSION_DATOS).
 RITMO_FUENTES = {
     "google_flights": {
-        "intervalo_min": 5,
+        # Cada 2 min como mucho: una búsqueda a la que le toca no espera (el total de peticiones lo marca
+        # el ritmo de cada búsqueda, cada 20 min, no esto)
+        "intervalo_min": 2,
         "descripcion": "Fuente principal: compara casi todas las aerolíneas (Ryanair, Vueling, Iberia, easyJet...). "
-        "Cada búsqueda se revisa cada 20-90 min según lo cerca que esté el viaje; 6-16 s entre peticiones.",
+        "Cada búsqueda se revisa cada 20 min; 6-16 s entre peticiones.",
     },
     "ryanair": {
-        "intervalo_min": 30,
-        "descripcion": "Confirma el precio en la propia Ryanair. Una ronda cada 30 min como mucho; "
-        "2 min entre peticiones (el doble de lo recomendado).",
+        # Una consulta cada 10 min (antes, 3 seguidas cada 30 con 2 min de pausa): el mismo ritmo para Ryanair,
+        # pero la vuelta del robot ya no se queda esperando esas pausas y Google no se retrasa
+        "intervalo_min": 10,
+        "max_peticiones": 1,
+        "descripcion": "Confirma el precio en la propia Ryanair. Una consulta cada 10 min como mucho "
+        "(menos de lo que recomiendan).",
     },
 }
 
