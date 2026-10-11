@@ -339,7 +339,7 @@ insert into public.estado_fuentes
   (fuente, nombre, activa, intervalo_min, pausa_min_s, pausa_max_s, max_peticiones, descripcion)
 values
   ('google_flights', 'Google Flights', true, 2, 6, 16, 60,
-   'Fuente principal: compara casi todas las aerolíneas (Ryanair, Vueling, Iberia, easyJet...). Cada búsqueda se revisa cada 20 min; 6-16 s entre peticiones.'),
+   'Fuente principal: compara casi todas las aerolíneas (Ryanair, Vueling, Iberia, easyJet...). Cada búsqueda se revisa cada 20 min (cada 40 si el viaje es dentro de más de 2 meses); 6-16 s entre peticiones.'),
   ('ryanair', 'Ryanair (web oficial)', true, 10, 120, 140, 1,
    'Confirma el precio en la propia Ryanair. Una consulta cada 10 min como mucho (menos de lo que recomiendan).'),
   ('skyscanner', 'Skyscanner', false, 740, 30, 60, 2,

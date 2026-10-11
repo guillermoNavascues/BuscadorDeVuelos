@@ -25,7 +25,7 @@ function estadoRobot(latido) {
   if (minutos !== null && minutos < 5) {
     return {
       clase: "activo", punto: "", etiqueta: "En directo", titulo: "Buscando vuelos sin parar",
-      texto: "Cada minuto mira Telegram y revisa las búsquedas a las que les toca: cada una, cada 20 min.",
+      texto: "Cada minuto mira Telegram y revisa las búsquedas a las que les toca: cada 20 min si el viaje es dentro de menos de 2 meses y cada 40 si falta más.",
     };
   }
   if (minutos !== null && minutos < 180) {
