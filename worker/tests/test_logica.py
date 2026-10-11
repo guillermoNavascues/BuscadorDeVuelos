@@ -317,8 +317,10 @@ def test_chollo_cercano_se_revisa_cada_20_minutos():
     cerca = busqueda(modo="chollo", chollo_desde="2026-10-09", chollo_hasta="2026-10-28")
     lejos = busqueda(modo="chollo", chollo_desde="2027-02-01", chollo_hasta="2027-03-01")
     assert minutos_hasta_siguiente_revision(cerca, hoy) == 20
-    assert minutos_hasta_siguiente_revision(lejos, hoy) == 20  # cerca o lejos, cada 20 min
-    assert minutos_hasta_siguiente_revision(busqueda(fecha_ida="2027-06-08", fecha_vuelta="2027-06-10"), hoy) == 20
+    assert minutos_hasta_siguiente_revision(lejos, hoy) == 40  # a más de 2 meses, cada 40 min
+    # Con fechas concretas: hasta 2 meses vista, cada 20; después, cada 40
+    assert minutos_hasta_siguiente_revision(busqueda(fecha_ida="2026-12-07", fecha_vuelta="2026-12-10"), hoy) == 20
+    assert minutos_hasta_siguiente_revision(busqueda(fecha_ida="2026-12-08", fecha_vuelta="2026-12-10"), hoy) == 40
 
 
 def test_enlaces_comprar_ya_en_google_flights():

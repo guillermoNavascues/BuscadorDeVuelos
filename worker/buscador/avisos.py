@@ -241,7 +241,8 @@ def _duracion(minutos: float) -> str:
 
 
 def mensaje_bloqueo(web: str, motivo: str, seguidos: int, espera_min: float, hasta: datetime, ultima_hora: int,
-                    en_sesion: int, sesion_min: float, desde_ok_min: float | None, busquedas: int) -> str:
+                    en_sesion: int, sesion_min: float, desde_ok_min: float | None, busquedas: int,
+                    maximo_hora: int | None = None) -> str:
     """Una web ha bloqueado al robot: cuánto llevaba y cuánto descansa (para entender sus límites)."""
     lineas = [
         f"🚧 <b>{_e(web)} ha frenado al robot</b>",
@@ -252,7 +253,7 @@ def mensaje_bloqueo(web: str, motivo: str, seguidos: int, espera_min: float, has
     if desde_ok_min is not None:
         lineas.append(f"Última vez que respondió bien: hace {_duracion(desde_ok_min)}")
     lineas += [
-        f"Búsquedas activas: {busquedas} (cada una, cada 20 min)",
+        f"Búsquedas activas: {busquedas}" + (f" · máximo {maximo_hora} consultas por hora" if maximo_hora else ""),
         f"{'Primer bloqueo' if seguidos == 1 else f'Bloqueo nº {seguidos} seguido'}: el robot descansa "
         f"{_duracion(espera_min)} (hasta las {hasta.astimezone(ZONA):%H:%M}) y vuelve a probar solo.",
         "Te escribo otra vez cuando vuelva a responder.",

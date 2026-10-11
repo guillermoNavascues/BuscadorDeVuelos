@@ -43,6 +43,10 @@ log = logging.getLogger("buscador")
 
 LIMITE_RONDA_S = 12 * 60  # tiempo máximo de consultas por ronda
 BLOQUEO_MAX = timedelta(hours=48)
+# Google frena al robot con las ráfagas (datos del 11/10/2026: 130 consultas en 25 min, 154 y 246 en una hora,
+# y 66 + 66 seguidas al cambiar de sesión). Como mucho 90 por hora: lo que no cabe espera en la cola.
+GOOGLE_POR_HORA = 90
+CUPO_MINIMO = 6  # por debajo de esto no se empieza una revisión de Google (cada una son unas 5-15 consultas)
 OPCIONES_GUARDADAS = 5
 ESPERA_ENTRE_VUELTAS_S = 60  # en modo continuo: cada minuto se mira Telegram y qué toca revisar
 MARGEN_FINAL_S = 15 * 60  # en modo continuo no se empieza una ronda si queda menos que esto
@@ -50,18 +54,22 @@ ATENCION_ESPERA_S = 10  # en modo continuo, Telegram y las pruebas de la web se 
 LATIDO_CADA_S = 60
 PRIMERA_REVISION_MIN = 2  # una búsqueda nueva se mira en cuanto la web lleve 2 min sin consultarse
 LIMPIEZA_CADA = timedelta(hours=6)
-VERSION_DATOS = 5
+VERSION_DATOS = 6
 
 # Ritmo de cada web en modo continuo (minutos entre rondas). Lo que de verdad marca el ritmo es
-# cada búsqueda (cada 20 min, ver decision.py) y las pausas entre peticiones.
+# cada búsqueda (cada 20 o 40 min, ver decision.py), el máximo por hora y las pausas entre peticiones.
 # Se aplica una sola vez a la base de datos (VERSION_DATOS).
 RITMO_FUENTES = {
     "google_flights": {
         # Cada 2 min como mucho: una búsqueda a la que le toca no espera (el total de peticiones lo marca
         # el ritmo de cada búsqueda, cada 20 min, no esto)
         "intervalo_min": 2,
+        # 15-30 s entre consultas (antes 6-16): Google frenaba al robot con las ráfagas (130 en 25 min)
+        "pausa_min_s": 15,
+        "pausa_max_s": 30,
         "descripcion": "Fuente principal: compara casi todas las aerolíneas (Ryanair, Vueling, Iberia, easyJet...). "
-        "Cada búsqueda se revisa cada 20 min; 6-16 s entre peticiones.",
+        "Cada búsqueda se revisa cada 20 min (40 si el viaje es dentro de más de 2 meses), con 90 consultas "
+        "por hora como mucho y 15-30 s entre ellas, para que Google no frene al robot.",
     },
     "ryanair": {
         # Una consulta cada 10 min (antes, 3 seguidas cada 30 con 2 min de pausa): el mismo ritmo para Ryanair,
@@ -86,8 +94,19 @@ def peticiones_desde(fuente: str, desde: datetime) -> int:
     return sum(n for momento, n in REGISTRO_PETICIONES.get(fuente, []) if momento >= desde)
 
 
+def peticiones_ultima_hora(db: Supabase, fuente: str, ahora: datetime) -> int:
+    """Consultas hechas a una web en la última hora, según el registro de vueltas de la base de datos
+    (así cuenta también lo de la sesión anterior del robot)."""
+    filas = db.leer("ejecuciones", inicio=f"gte.{(ahora - timedelta(hours=1)).isoformat()}", select="resumen")
+    total = 0
+    for f in filas:
+        datos = ((f.get("resumen") or {}).get("fuentes") or {}).get(fuente) or {}
+        total += int(datos.get("peticiones") or 0)
+    return total
+
+
 def avisar_estado_fuente(tg: Telegram | None, chats: list[str], nombre_web: str, cfg: dict, est: dict, cambios: dict,
-                         ahora: datetime, busquedas: int) -> None:
+                         ahora: datetime, busquedas: int, ultima_hora: int | None = None) -> None:
     """Telegram cuando una web bloquea al robot y cuando vuelve a responder."""
     if not tg or not chats:
         return
@@ -96,9 +115,11 @@ def avisar_estado_fuente(tg: Telegram | None, chats: list[str], nombre_web: str,
         ultima_ok = _fecha_hora(cfg.get("ultima_ok"))
         texto = mensaje_bloqueo(
             nombre_web, _sin_urls(est["bloqueo"]), cambios["bloqueos_seguidos"], (hasta - ahora).total_seconds() / 60, hasta,
-            peticiones_desde(cfg["fuente"], ahora - timedelta(hours=1)), peticiones_desde(cfg["fuente"], INICIO_SESION),
+            ultima_hora if ultima_hora is not None else peticiones_desde(cfg["fuente"], ahora - timedelta(hours=1)),
+            peticiones_desde(cfg["fuente"], INICIO_SESION),
             (ahora - INICIO_SESION).total_seconds() / 60,
             (ahora - ultima_ok).total_seconds() / 60 if ultima_ok else None, busquedas,
+            GOOGLE_POR_HORA if cfg["fuente"] == "google_flights" else None,
         )
     elif cfg.get("bloqueos_seguidos"):
         bloqueo = _fecha_hora(cfg.get("ultima_ronda"))  # la última vuelta en que se consultó fue la del bloqueo
@@ -584,11 +605,26 @@ def ronda(db: Supabase, tg: Telegram | None, url_web: str | None, forzar: bool, 
             pendientes.append(b)
     if not pendientes:
         return None
-    pendientes.sort(key=lambda b: str(b.get("fecha_ida") or b.get("chollo_desde")))  # primero los viajes cercanos
+    # Primero las que más llevan esperando: con el máximo de consultas por hora ninguna se queda atrás
+    pendientes.sort(key=lambda b: str(b.get("proxima_revision") or ""))
 
     config = {f["fuente"]: f for f in db.leer("estado_fuentes")}
     listas = fuentes_listas(config, pendientes, ahora, forzar)
+    # Máximo de consultas a Google por hora (lo que no cabe espera en la cola, en vez de que Google frene al robot)
+    google_hora = peticiones_ultima_hora(db, "google_flights", ahora) if "google_flights" in listas else 0
+    cupo_google = GOOGLE_POR_HORA - google_hora
+    google_sin_cupo = "google_flights" in listas and cupo_google < CUPO_MINIMO
+    texto_cola = (f"En cola: el robot reparte las consultas a Google ({GOOGLE_POR_HORA} por hora como mucho) "
+                  "para que no lo frene; se revisa en cuanto haya hueco")
+    if google_sin_cupo:
+        listas.remove("google_flights")
+    elif "google_flights" in listas:
+        config["google_flights"] = {**config["google_flights"],
+                                    "max_peticiones": min(config["google_flights"]["max_peticiones"], cupo_google)}
     if not listas:
+        for b in pendientes if google_sin_cupo else []:
+            if b.get("estado") != texto_cola:  # solo si cambia (esto se mira cada minuto)
+                db.actualizar("busquedas", {"id": f"eq.{b['id']}"}, {"estado": texto_cola})
         return None
 
     t0 = time.monotonic()
@@ -616,8 +652,10 @@ def ronda(db: Supabase, tg: Telegram | None, url_web: str | None, forzar: bool, 
             cambios = {"ultima_ronda": ahora.isoformat()}
             if est["bloqueo"]:
                 seguidos = cfg["bloqueos_seguidos"] + 1
-                # Al menos 30 min de descanso, y el doble con cada bloqueo seguido (máximo 48 h)
-                espera = min(timedelta(minutes=max(cfg["intervalo_min"], 30) * 2**seguidos), BLOQUEO_MAX)
+                # Páginas sin vuelos: 20 min de descanso (luego el máximo por hora ya frena); un bloqueo claro
+                # (tráfico inusual, 429...): 30 min. El doble con cada bloqueo seguido (máximo 48 h).
+                base = 20 if "páginas sin vuelos" in est["bloqueo"] else max(cfg["intervalo_min"], 30)
+                espera = min(timedelta(minutes=base * 2 ** (seguidos - 1)), BLOQUEO_MAX)
                 cambios.update(bloqueos_seguidos=seguidos, bloqueada_hasta=(ahora + espera).isoformat(), ultimo_error=est["bloqueo"])
             else:
                 cambios.update(bloqueos_seguidos=0, bloqueada_hasta=None, ultima_ok=ahora.isoformat(),
@@ -627,7 +665,8 @@ def ronda(db: Supabase, tg: Telegram | None, url_web: str | None, forzar: bool, 
             if est["bloqueo"] or cfg.get("bloqueos_seguidos"):  # se bloquea, o vuelve a responder tras un bloqueo
                 try:
                     avisar_estado_fuente(tg, chats, cfg.get("nombre") or nombre, {**cfg, "fuente": nombre}, est, cambios,
-                                         ahora, len(db.leer("busquedas", activa="eq.true", select="id")))
+                                         ahora, len(db.leer("busquedas", activa="eq.true", select="id")),
+                                         google_hora + est["peticiones"] if nombre == "google_flights" else None)
                 except Exception as e:  # el aviso nunca debe parar la ronda
                     log.warning("No se pudo avisar del estado de %s: %s", nombre, type(e).__name__)
 
@@ -639,8 +678,12 @@ def ronda(db: Supabase, tg: Telegram | None, url_web: str | None, forzar: bool, 
             por_fuente = resultados.get(b["id"], {})
             if not por_fuente:
                 # Queda en cola para la siguiente vuelta (no se queda con una hora de revisión vieja)
-                texto = (f"En espera: Google Flights ha frenado al robot; vuelve a probar a las {google_hasta.astimezone(ZONA):%H:%M}"
-                         if google_hasta else "En cola: no dio tiempo en esta vuelta; se revisa en la siguiente, en unos minutos")
+                if google_hasta:
+                    texto = f"En espera: Google Flights ha frenado al robot; vuelve a probar a las {google_hasta.astimezone(ZONA):%H:%M}"
+                elif google_sin_cupo or ("google_flights" in estado and estado["google_flights"]["peticiones"] >= cupo_google):
+                    texto = texto_cola
+                else:
+                    texto = "En cola: no dio tiempo en esta vuelta; se revisa en la siguiente, en unos minutos"
                 db.actualizar("busquedas", {"id": f"eq.{b['id']}"}, {"estado": texto, "proxima_revision": ahora.isoformat()})
                 continue
             info = dict(b.get("info") or {})

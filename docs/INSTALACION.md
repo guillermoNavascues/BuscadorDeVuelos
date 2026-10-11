@@ -116,7 +116,8 @@ Arrancar el robot:
 3. La casilla **"Forzar: revisar ya todas las búsquedas"** ya viene marcada: pulsa el botón verde **Run workflow**.
 
 A partir de ahí funciona **sin parar**: cada minuto mira Telegram y revisa las búsquedas a las que les toca
-(cada búsqueda, cada 20 min; si una web bloquea al robot, te avisa por Telegram).
+(cada 20 min si el viaje es dentro de menos de 2 meses y cada 40 si falta más, con 90 consultas a Google por hora
+como mucho; si una web frena al robot, te avisa por Telegram).
 Cada sesión dura casi 6 horas y, al terminar, lanza la siguiente. Además, cada 2 horas GitHub comprueba que haya
 una en marcha y, si la cadena se hubiera cortado, la vuelve a arrancar.
 

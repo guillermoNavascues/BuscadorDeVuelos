@@ -438,6 +438,7 @@ def test_aviso_por_telegram_al_bloquear_y_al_recuperarse(monkeypatch):
     texto = tg.enviados[0][1]
     assert tg.enviados[0][0] == "99" and "ha frenado al robot" in texto
     assert "37 en la última hora" in texto and "67 en esta sesión" in texto and "2 h 00 min" in texto
+    assert "máximo 90 consultas por hora" in texto
     assert "hace 25 min" in texto and "descansa 1 h 00 min" in texto and "hasta las 13:00" in texto  # hora de Madrid (UTC+2 en octubre)
     assert "Primer bloqueo" in texto and "sorry" not in texto  # sin direcciones
 
@@ -486,3 +487,50 @@ def test_busqueda_sin_tiempo_queda_en_cola_con_el_motivo(monkeypatch):
     run.ronda(db, None, None, forzar=True, limite_s=60)
     b = db.leer("busquedas")[0]
     assert b["estado"].startswith("En cola") and b["proxima_revision"] <= datetime.now(timezone.utc).isoformat()
+
+
+def test_maximo_de_consultas_a_google_por_hora_y_pausa_corta(monkeypatch):
+    ahora = datetime.now(timezone.utc)
+    fuente = {"activa": True, "bloqueos_seguidos": 0, "ultima_ronda": None, "bloqueada_hasta": None, "intervalo_min": 2,
+              "pausa_min_s": 15, "pausa_max_s": 30}
+
+    def base(consultas_ultima_hora):
+        return BaseDeDatosFalsa({
+            "busquedas": [{"id": "b1", "usuario": "u1", "nombre": "París", "activa": True, "modo": "fechas", "ida_vuelta": True,
+                           "fecha_ida": "2027-01-10", "fecha_vuelta": "2027-01-12", "info": {},
+                           "proxima_revision": (ahora - timedelta(minutes=5)).isoformat()}],
+            "estado_fuentes": [{**fuente, "fuente": "google_flights", "nombre": "Google Flights", "max_peticiones": 60}],
+            "aerolineas": [], "perfiles": [],
+            "ejecuciones": [{"id": 1, "inicio": (ahora - timedelta(minutes=30)).isoformat(),
+                             "resumen": {"fuentes": {"google_flights": {"peticiones": consultas_ultima_hora}}}}],
+        })
+
+    usadas = {}
+
+    def consultar(fuentes, tareas, validadores, config, limite_s):
+        usadas["fuentes"] = list(fuentes)
+        usadas["max"] = {n: config[n]["max_peticiones"] for n in fuentes}
+        bloqueo = "Google devuelve páginas sin vuelos una y otra vez: el robot hace una pausa" if usadas.get("bloquear") else None
+        return {}, {n: {"bloqueo": bloqueo, "errores": [], "busquedas": 0, "peticiones": config[n]["max_peticiones"]}
+                    for n in fuentes}
+
+    monkeypatch.setattr(run, "crear_fuentes", lambda nombres, config, aerolineas: {n: None for n in nombres})
+    monkeypatch.setattr(run, "consultar", consultar)
+
+    # Con 88 consultas en la última hora no cabe otra revisión: Google no se consulta y la búsqueda espera en cola
+    db = base(88)
+    assert run.ronda(db, None, None, forzar=False, limite_s=60) is None
+    assert db.leer("busquedas")[0]["estado"].startswith("En cola: el robot reparte las consultas a Google")
+    # Con 50, sí, pero sin pasar del máximo (90 - 50 = 40 en esta vuelta)
+    db = base(50)
+    run.ronda(db, None, None, forzar=False, limite_s=60)
+    assert usadas["fuentes"] == ["google_flights"] and usadas["max"]["google_flights"] == 40
+    # Si no le da para la búsqueda, queda en cola explicando por qué
+    assert db.leer("busquedas")[0]["estado"].startswith("En cola: el robot reparte las consultas a Google")
+
+    # Páginas sin vuelos: la primera pausa es de 20 min (antes, 1 hora)
+    usadas["bloquear"] = True
+    db = base(0)
+    run.ronda(db, None, None, forzar=False, limite_s=60)
+    hasta = datetime.fromisoformat(db.leer("estado_fuentes")[0]["bloqueada_hasta"])
+    assert timedelta(minutes=19) < hasta - ahora < timedelta(minutes=21)
