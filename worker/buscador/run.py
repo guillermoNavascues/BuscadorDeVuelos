@@ -35,6 +35,7 @@ from .decision import decidir, minutos_hasta_siguiente_revision
 from .filtros import Validador, franja
 from .modelos import Opcion
 from .nucleo import consultar, crear_fuentes, evaluar
+from .tiempo import ZONA
 from .tiempo import hoy as hoy_espana
 from .viaje import es_varios_destinos, salidas
 
@@ -622,6 +623,7 @@ def ronda(db: Supabase, tg: Telegram | None, url_web: str | None, forzar: bool, 
                 cambios.update(bloqueos_seguidos=0, bloqueada_hasta=None, ultima_ok=ahora.isoformat(),
                                ultimo_error=est["errores"][-1] if est["errores"] else None)
             db.actualizar("estado_fuentes", {"fuente": f"eq.{nombre}"}, cambios)
+            config[nombre] = {**cfg, **cambios}
             if est["bloqueo"] or cfg.get("bloqueos_seguidos"):  # se bloquea, o vuelve a responder tras un bloqueo
                 try:
                     avisar_estado_fuente(tg, chats, cfg.get("nombre") or nombre, {**cfg, "fuente": nombre}, est, cambios,
@@ -629,11 +631,17 @@ def ronda(db: Supabase, tg: Telegram | None, url_web: str | None, forzar: bool, 
                 except Exception as e:  # el aviso nunca debe parar la ronda
                     log.warning("No se pudo avisar del estado de %s: %s", nombre, type(e).__name__)
 
+        # Si Google ha frenado al robot, las búsquedas esperan a que vuelva (y la web dice hasta cuándo)
+        google = config.get("google_flights") or {}
+        google_hasta = _fecha_hora(google.get("bloqueada_hasta")) if google.get("activa") else None
+        google_hasta = google_hasta if google_hasta and google_hasta > ahora else None
         for b in pendientes:
             por_fuente = resultados.get(b["id"], {})
             if not por_fuente:
-                db.actualizar("busquedas", {"id": f"eq.{b['id']}"},
-                              {"estado": "Pendiente: no dio tiempo en esta ronda, se revisará en la siguiente"})
+                # Queda en cola para la siguiente vuelta (no se queda con una hora de revisión vieja)
+                texto = (f"En espera: Google Flights ha frenado al robot; vuelve a probar a las {google_hasta.astimezone(ZONA):%H:%M}"
+                         if google_hasta else "En cola: no dio tiempo en esta vuelta; se revisa en la siguiente, en unos minutos")
+                db.actualizar("busquedas", {"id": f"eq.{b['id']}"}, {"estado": texto, "proxima_revision": ahora.isoformat()})
                 continue
             info = dict(b.get("info") or {})
             if "ryanair" in por_fuente:

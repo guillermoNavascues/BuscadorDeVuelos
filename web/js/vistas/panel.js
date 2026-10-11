@@ -35,6 +35,14 @@ function etiquetaPrecio(b) {
   return b.mejor_precio != null ? `mínimo visto ${eur(b.mejor_precio)}` : "precio total para todos";
 }
 
+/** Cuándo toca la siguiente revisión ("en cola" si ya debería haberse hecho). */
+function textoProxima(b) {
+  if (!b.activa) return "en pausa";
+  const falta = new Date(b.proxima_revision) - Date.now();
+  if (falta > 60000) return `próxima ${hace(b.proxima_revision)}`;
+  return falta > -3 * 60000 ? "revisándose ahora" : `en cola desde ${hace(b.proxima_revision)}`;
+}
+
 function precioInicial(b) {
   if (b.precio_actual != null) return eur(b.precio_actual);
   return b.ultima_revision ? "—" : '<span class="buscando"><span class="anillo-mini"></span>Buscando…</span>';
@@ -75,7 +83,7 @@ function tarjetaBusqueda(b, datos, mejor) {
       <div class="mini-grafica"><canvas data-grafica="${b.id}" aria-label="Evolución del precio"></canvas></div>
       <div class="busqueda-pie">
         <span class="pequeno suave" data-estado>${esc(estadoLegible(b.estado) || "Pendiente de la primera revisión")}</span>
-        <span class="pequeno tenue" data-revisado>${b.activa ? `próxima ${hace(b.proxima_revision)}` : "en pausa"}</span>
+        <span class="pequeno tenue" data-revisado>${textoProxima(b)}</span>
       </div>
       <div class="acciones">
         <a class="boton pequeno primario" href="#/busqueda/${b.id}">${icono("grafica")}En directo</a>
@@ -186,7 +194,7 @@ export async function vistaPanel(app) {
     if (local) Object.assign(local, b);
     tarjeta.querySelector("[data-fechas]").innerHTML = fechasDe(b, mejores.get(b.id));
     tarjeta.querySelector("[data-estado]").textContent = estadoLegible(b.estado);
-    tarjeta.querySelector("[data-revisado]").textContent = b.activa ? `próxima ${hace(b.proxima_revision)}` : "en pausa";
+    tarjeta.querySelector("[data-revisado]").textContent = textoProxima(b);
   }));
   alSalir(api.suscribir("precios", ({ new: p }) => {
     tiempoRealActivo = true;

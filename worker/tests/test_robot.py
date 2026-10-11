@@ -452,3 +452,37 @@ def test_aviso_por_telegram_al_bloquear_y_al_recuperarse(monkeypatch):
     run.avisar_estado_fuente(tg, ["99"], "Google Flights", cfg, {"bloqueo": None, "peticiones": 8, "errores": []}, {}, ahora, 4)
     run.avisar_estado_fuente(tg, [], "Google Flights", cfg, est, cambios, ahora, 4)
     assert tg.enviados == []
+
+
+def test_busqueda_sin_tiempo_queda_en_cola_con_el_motivo(monkeypatch):
+    ahora = datetime.now(timezone.utc)
+
+    def base(google_bloqueada_hasta):
+        fuente = {"activa": True, "bloqueos_seguidos": 0, "ultima_ronda": None, "max_peticiones": 60,
+                  "pausa_min_s": 6, "pausa_max_s": 16, "intervalo_min": 2}
+        return BaseDeDatosFalsa({
+            "busquedas": [{"id": "b1", "usuario": "u1", "nombre": "París", "activa": True, "modo": "fechas",
+                           "ida_vuelta": True, "fecha_ida": "2027-01-10", "fecha_vuelta": "2027-01-12", "info": {},
+                           "proxima_revision": (ahora + timedelta(minutes=57)).isoformat()}],  # con "Forzar" entra igual
+            "estado_fuentes": [{**fuente, "fuente": "google_flights", "nombre": "Google Flights",
+                                "bloqueada_hasta": google_bloqueada_hasta},
+                               {**fuente, "fuente": "ryanair", "nombre": "Ryanair", "bloqueada_hasta": None}],
+            "aerolineas": [], "perfiles": [], "ejecuciones": [],
+        })
+
+    monkeypatch.setattr(run, "crear_fuentes", lambda nombres, config, aerolineas: {n: None for n in nombres})
+    monkeypatch.setattr(run, "consultar", lambda fuentes, tareas, validadores, config, limite_s: (
+        {}, {n: {"bloqueo": None, "errores": [], "busquedas": 0, "peticiones": 0} for n in fuentes}))
+
+    # Google frenado: la búsqueda espera y la web dice hasta cuándo
+    db = base((ahora + timedelta(minutes=40)).isoformat())
+    run.ronda(db, None, None, forzar=True, limite_s=60)
+    b = db.leer("busquedas")[0]
+    assert b["estado"].startswith("En espera: Google Flights ha frenado al robot; vuelve a probar a las")
+    assert b["proxima_revision"] <= datetime.now(timezone.utc).isoformat()  # en cola, no dentro de 57 min
+
+    # Sin bloqueo, simplemente no dio tiempo: en cola para la siguiente vuelta
+    db = base(None)
+    run.ronda(db, None, None, forzar=True, limite_s=60)
+    b = db.leer("busquedas")[0]
+    assert b["estado"].startswith("En cola") and b["proxima_revision"] <= datetime.now(timezone.utc).isoformat()

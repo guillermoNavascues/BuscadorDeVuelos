@@ -316,6 +316,7 @@ export function generarCodigo() {
 /** Mensajes técnicos de versiones anteriores del robot, explicados (los nuevos ya vienen en español). */
 export function estadoLegible(texto) {
   const t = String(texto ?? "");
+  if (/^Pendiente: no dio tiempo/.test(t)) return "En cola: no dio tiempo en esta vuelta; se revisa en la siguiente, en unos minutos";
   if (/SearchParseError|ds:1 payload/i.test(t)) {
     return "No se pudo consultar en esta ronda: Google ha devuelto una página sin vuelos; suele ser un fallo puntual suyo (se reintenta en unos minutos)";
   }
