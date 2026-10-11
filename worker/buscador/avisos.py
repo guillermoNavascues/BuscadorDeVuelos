@@ -235,6 +235,36 @@ def alarma_en_pausa(perfil: dict, ahora: datetime | None = None) -> bool:
     return t < hasta and (dia - 2) % 7 + 1 in dias  # de madrugada: la pausa empezó el día anterior
 
 
+def _duracion(minutos: float) -> str:
+    m = max(0, round(minutos))
+    return f"{m // 60} h {m % 60:02d} min" if m >= 60 else f"{m} min"
+
+
+def mensaje_bloqueo(web: str, motivo: str, seguidos: int, espera_min: float, hasta: datetime, ultima_hora: int,
+                    en_sesion: int, sesion_min: float, desde_ok_min: float | None, busquedas: int) -> str:
+    """Una web ha bloqueado al robot: cuánto llevaba y cuánto descansa (para entender sus límites)."""
+    lineas = [
+        f"🚧 <b>{_e(web)} ha frenado al robot</b>",
+        f"Qué ha pasado: {_e(motivo)}",
+        f"Peticiones hechas: <b>{ultima_hora} en la última hora</b> · {en_sesion} en esta sesión del robot "
+        f"(lleva {_duracion(sesion_min)} en marcha)",
+    ]
+    if desde_ok_min is not None:
+        lineas.append(f"Última vez que respondió bien: hace {_duracion(desde_ok_min)}")
+    lineas += [
+        f"Búsquedas activas: {busquedas} (cada una, cada 20 min)",
+        f"{'Primer bloqueo' if seguidos == 1 else f'Bloqueo nº {seguidos} seguido'}: el robot descansa "
+        f"{_duracion(espera_min)} (hasta las {hasta.astimezone(ZONA):%H:%M}) y vuelve a probar solo.",
+        "Te escribo otra vez cuando vuelva a responder.",
+    ]
+    return "\n".join(lineas)
+
+
+def mensaje_recuperada(web: str, pausa_min: float, peticiones: int) -> str:
+    return (f"✅ <b>{_e(web)} vuelve a responder</b> tras {_duracion(pausa_min)} de pausa "
+            f"({peticiones} peticiones en esta vuelta, sin problemas). El robot sigue con normalidad.")
+
+
 LIMITE_TELEGRAM = 4000  # Telegram admite 4096 caracteres por mensaje
 
 

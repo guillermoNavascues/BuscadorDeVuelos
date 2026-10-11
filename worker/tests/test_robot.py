@@ -421,3 +421,34 @@ def test_mensaje_de_acceso_con_hora_de_madrid_y_html_seguro():
     assert "Contraseña cambiada" in texto and "09:05:09 (hora de Madrid)" in texto  # en invierno, UTC+1
     assert "&lt;b&gt;" in texto and "<b>nueva</b>" in texto
     assert "evento sin tipo" in mensaje_accesos([{"created_at": "2026-12-01T08:05:09+00:00", "accion": None, "ip_address": ""}])
+
+
+def test_aviso_por_telegram_al_bloquear_y_al_recuperarse(monkeypatch):
+    ahora = datetime(2026, 10, 11, 10, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(run, "INICIO_SESION", ahora - timedelta(hours=2))
+    monkeypatch.setattr(run, "REGISTRO_PETICIONES", {"google_flights": [
+        (ahora - timedelta(minutes=90), 30), (ahora - timedelta(minutes=40), 25), (ahora - timedelta(minutes=5), 12)]})
+    tg = TelegramFalso([])
+    cfg = {"fuente": "google_flights", "bloqueos_seguidos": 0, "ultima_ok": (ahora - timedelta(minutes=25)).isoformat(),
+           "ultima_ronda": (ahora - timedelta(minutes=25)).isoformat()}
+    est = {"bloqueo": "Google Flights ha respondido con su página de tráfico inusual https://www.google.com/sorry/x",
+           "peticiones": 12, "errores": []}
+    cambios = {"bloqueos_seguidos": 1, "bloqueada_hasta": (ahora + timedelta(minutes=60)).isoformat()}
+    run.avisar_estado_fuente(tg, ["99"], "Google Flights", cfg, est, cambios, ahora, 4)
+    texto = tg.enviados[0][1]
+    assert tg.enviados[0][0] == "99" and "ha frenado al robot" in texto
+    assert "37 en la última hora" in texto and "67 en esta sesión" in texto and "2 h 00 min" in texto
+    assert "hace 25 min" in texto and "descansa 1 h 00 min" in texto and "hasta las 13:00" in texto  # hora de Madrid (UTC+2 en octubre)
+    assert "Primer bloqueo" in texto and "sorry" not in texto  # sin direcciones
+
+    # Cuando vuelve a responder, otro mensaje con lo que ha durado la pausa
+    tg.enviados.clear()
+    run.avisar_estado_fuente(tg, ["99"], "Google Flights", {**cfg, "bloqueos_seguidos": 1, "ultima_ronda": ahora.isoformat()},
+                             {"bloqueo": None, "peticiones": 8, "errores": []}, {}, ahora + timedelta(minutes=75), 4)
+    assert "vuelve a responder" in tg.enviados[0][1] and "1 h 15 min" in tg.enviados[0][1]
+
+    # Funcionando normal: ningún mensaje; y sin Telegram vinculado, tampoco
+    tg.enviados.clear()
+    run.avisar_estado_fuente(tg, ["99"], "Google Flights", cfg, {"bloqueo": None, "peticiones": 8, "errores": []}, {}, ahora, 4)
+    run.avisar_estado_fuente(tg, [], "Google Flights", cfg, est, cambios, ahora, 4)
+    assert tg.enviados == []

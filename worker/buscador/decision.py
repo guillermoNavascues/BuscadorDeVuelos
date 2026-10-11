@@ -250,15 +250,12 @@ def decidir(
 # Cada cuántos minutos se revisa una búsqueda (el robot funciona sin parar).
 # Las aerolíneas cambian precios varias veces al día: revisar más a menudo no aporta más
 # información y solo haría que Google bloquease al robot.
-# Cada 20 min si el viaje sale en menos de 2 meses y cada 40 si falta más: los precios lejanos se mueven
-# menos y así se gastan menos consultas a Google (cada revisión son unas 5; un chollo, unas 13). Si Google
-# empieza a limitar, el robot lo nota y descansa solo (ver run.py, bloqueos).
-DIAS_VIAJE_CERCANO = 60
-REVISION_CERCA_MIN = 20
-REVISION_LEJOS_MIN = 40
+# Todas las búsquedas se revisan cada 20 min, esté el viaje cerca o lejos. Cada revisión son unas 5
+# peticiones a Google (un chollo, unas 13). Si Google limita, el robot descansa solo y te avisa por
+# Telegram con cuántas peticiones llevaba (ver run.py, bloqueos): así se ve cuánto aguanta.
+REVISION_MIN = 20
 
 
 def minutos_hasta_siguiente_revision(busqueda: dict, hoy: date) -> int:
-    """Cada 20 min hasta 2 meses vista; cada 40 si falta más (en un chollo cuenta el inicio del periodo)."""
-    dias = (primera_salida(busqueda, hoy) - hoy).days
-    return REVISION_CERCA_MIN if dias <= DIAS_VIAJE_CERCANO else REVISION_LEJOS_MIN
+    """Cada 20 min, esté el viaje cerca o lejos."""
+    return REVISION_MIN

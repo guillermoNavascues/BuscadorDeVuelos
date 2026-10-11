@@ -29,7 +29,7 @@ Tú compras en la web oficial de la aerolínea.
 
 1. En la web creas una búsqueda: aeropuertos, fechas, horarios, pasajeros, maletas y presupuesto.
 2. El robot funciona sin parar en GitHub Actions (sesiones de casi 6 horas que se encadenan solas). Cada búsqueda
-   se revisa cada 20 min (cada 40 si el viaje es dentro de más de 2 meses), y cada web consultada tiene su propio ritmo.
+   se revisa cada 20 min, y cada web consultada tiene su propio ritmo (si una bloquea al robot, te avisa por Telegram).
 3. El robot hace lo siguiente:
    - Descarta lo que no cumple tus filtros.
    - Calcula el total real: billetes + maletas − descuentos.

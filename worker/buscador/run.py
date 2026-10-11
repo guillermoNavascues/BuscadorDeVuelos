@@ -27,7 +27,8 @@ from datetime import date, datetime, timedelta, timezone
 from . import enlaces
 from .avisos import (
     AYUDA, MENSAJE_PRUEBA, NOTA_PAUSA, TIPOS_ALARMA, Telegram, alarma, alarma_en_pausa, codigo_en_mensaje, eur,
-    mensaje_accesos, mensaje_accesos_activados, mensaje_aviso, mensaje_estado, texto_alarma,
+    mensaje_accesos, mensaje_accesos_activados, mensaje_aviso, mensaje_bloqueo, mensaje_estado, mensaje_recuperada,
+    texto_alarma,
 )
 from .db import Supabase
 from .decision import decidir, minutos_hasta_siguiente_revision
@@ -48,10 +49,10 @@ ATENCION_ESPERA_S = 10  # en modo continuo, Telegram y las pruebas de la web se 
 LATIDO_CADA_S = 60
 PRIMERA_REVISION_MIN = 2  # una búsqueda nueva se mira en cuanto la web lleve 2 min sin consultarse
 LIMPIEZA_CADA = timedelta(hours=6)
-VERSION_DATOS = 4
+VERSION_DATOS = 5
 
 # Ritmo de cada web en modo continuo (minutos entre rondas). Lo que de verdad marca el ritmo es
-# cada búsqueda (cada 20 o 40 min, ver decision.py) y las pausas entre peticiones.
+# cada búsqueda (cada 20 min, ver decision.py) y las pausas entre peticiones.
 # Se aplica una sola vez a la base de datos (VERSION_DATOS).
 RITMO_FUENTES = {
     "google_flights": {
@@ -59,7 +60,7 @@ RITMO_FUENTES = {
         # el ritmo de cada búsqueda, cada 20 min, no esto)
         "intervalo_min": 2,
         "descripcion": "Fuente principal: compara casi todas las aerolíneas (Ryanair, Vueling, Iberia, easyJet...). "
-        "Cada búsqueda se revisa cada 20 min (cada 40 si el viaje es dentro de más de 2 meses); 6-16 s entre peticiones.",
+        "Cada búsqueda se revisa cada 20 min; 6-16 s entre peticiones.",
     },
     "ryanair": {
         # Una consulta cada 10 min (antes, 3 seguidas cada 30 con 2 min de pausa): el mismo ritmo para Ryanair,
@@ -75,6 +76,38 @@ RITMO_FUENTES = {
 # ----------------------------------------------------------------------------------------
 # Utilidades
 # ----------------------------------------------------------------------------------------
+# Peticiones hechas a cada web en esta sesión del robot (para el aviso de bloqueo: cuánto aguanta cada una)
+INICIO_SESION = datetime.now(timezone.utc)
+REGISTRO_PETICIONES: dict[str, list[tuple[datetime, int]]] = {}
+
+
+def peticiones_desde(fuente: str, desde: datetime) -> int:
+    return sum(n for momento, n in REGISTRO_PETICIONES.get(fuente, []) if momento >= desde)
+
+
+def avisar_estado_fuente(tg: Telegram | None, chats: list[str], nombre_web: str, cfg: dict, est: dict, cambios: dict,
+                         ahora: datetime, busquedas: int) -> None:
+    """Telegram cuando una web bloquea al robot y cuando vuelve a responder."""
+    if not tg or not chats:
+        return
+    if est["bloqueo"]:
+        hasta = _fecha_hora(cambios["bloqueada_hasta"])
+        ultima_ok = _fecha_hora(cfg.get("ultima_ok"))
+        texto = mensaje_bloqueo(
+            nombre_web, _sin_urls(est["bloqueo"]), cambios["bloqueos_seguidos"], (hasta - ahora).total_seconds() / 60, hasta,
+            peticiones_desde(cfg["fuente"], ahora - timedelta(hours=1)), peticiones_desde(cfg["fuente"], INICIO_SESION),
+            (ahora - INICIO_SESION).total_seconds() / 60,
+            (ahora - ultima_ok).total_seconds() / 60 if ultima_ok else None, busquedas,
+        )
+    elif cfg.get("bloqueos_seguidos"):
+        bloqueo = _fecha_hora(cfg.get("ultima_ronda"))  # la última vuelta en que se consultó fue la del bloqueo
+        texto = mensaje_recuperada(nombre_web, (ahora - bloqueo).total_seconds() / 60 if bloqueo else 0, est["peticiones"])
+    else:
+        return
+    for chat in chats:
+        tg.enviar(chat, texto)
+
+
 def _sin_urls(texto: str) -> str:
     """Quita las URLs (pueden llevar rutas, fechas o tokens) antes de escribir en el registro público."""
     return re.sub(r"https?://\S+", "<url>", str(texto))[:200]
@@ -573,6 +606,9 @@ def ronda(db: Supabase, tg: Telegram | None, url_web: str | None, forzar: bool, 
         resultados, estado = consultar(fuentes, tareas, validadores, config, limite_s)
         _registrar_fuentes(estado, resultados)
         resumen["fuentes"] = estado
+        for nombre, est in estado.items():
+            REGISTRO_PETICIONES.setdefault(nombre, []).append((ahora, est["peticiones"]))
+        chats = [str(p["telegram_chat_id"]) for p in perfiles.values() if p.get("telegram_chat_id")]
 
         for nombre, est in estado.items():
             cfg = config[nombre]
@@ -586,6 +622,12 @@ def ronda(db: Supabase, tg: Telegram | None, url_web: str | None, forzar: bool, 
                 cambios.update(bloqueos_seguidos=0, bloqueada_hasta=None, ultima_ok=ahora.isoformat(),
                                ultimo_error=est["errores"][-1] if est["errores"] else None)
             db.actualizar("estado_fuentes", {"fuente": f"eq.{nombre}"}, cambios)
+            if est["bloqueo"] or cfg.get("bloqueos_seguidos"):  # se bloquea, o vuelve a responder tras un bloqueo
+                try:
+                    avisar_estado_fuente(tg, chats, cfg.get("nombre") or nombre, {**cfg, "fuente": nombre}, est, cambios,
+                                         ahora, len(db.leer("busquedas", activa="eq.true", select="id")))
+                except Exception as e:  # el aviso nunca debe parar la ronda
+                    log.warning("No se pudo avisar del estado de %s: %s", nombre, type(e).__name__)
 
         for b in pendientes:
             por_fuente = resultados.get(b["id"], {})
