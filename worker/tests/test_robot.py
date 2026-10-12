@@ -441,6 +441,9 @@ def test_aviso_por_telegram_al_bloquear_y_al_recuperarse(monkeypatch):
     assert "máximo 90 consultas por hora" in texto
     assert "hace 25 min" in texto and "descansa 1 h 00 min" in texto and "hasta las 13:00" in texto  # hora de Madrid (UTC+2 en octubre)
     assert "Primer bloqueo" in texto and "sorry" not in texto  # sin direcciones
+    run.avisar_estado_fuente(tg, ["99"], "Google Flights", cfg, {**est, "bloqueo_busqueda": "Puente en París"}, cambios, ahora, 4)
+    assert "Pasó al buscar: «Puente en París»" in tg.enviados[-1][1]
+    tg.enviados.pop()
 
     # Cuando vuelve a responder, otro mensaje con lo que ha durado la pausa
     tg.enviados.clear()
@@ -534,3 +537,23 @@ def test_maximo_de_consultas_a_google_por_hora_y_pausa_corta(monkeypatch):
     run.ronda(db, None, None, forzar=False, limite_s=60)
     hasta = datetime.fromisoformat(db.leer("estado_fuentes")[0]["bloqueada_hasta"])
     assert timedelta(minutes=19) < hasta - ahora < timedelta(minutes=21)
+
+
+def test_la_busqueda_con_la_que_falla_google_va_al_final_de_la_cola(monkeypatch):
+    ahora = datetime.now(timezone.utc)
+    fuente = {"activa": True, "bloqueos_seguidos": 0, "ultima_ronda": None, "bloqueada_hasta": None, "intervalo_min": 2,
+              "pausa_min_s": 15, "pausa_max_s": 30, "max_peticiones": 60}
+    busquedas = [{"id": i, "usuario": "u1", "nombre": i, "activa": True, "modo": "fechas", "ida_vuelta": True,
+                  "fecha_ida": "2027-01-10", "fecha_vuelta": "2027-01-12", "info": {},
+                  "proxima_revision": (ahora - timedelta(minutes=m)).isoformat()} for i, m in (("mala", 30), ("otra", 5))]
+    db = BaseDeDatosFalsa({"busquedas": busquedas, "aerolineas": [], "perfiles": [], "ejecuciones": [],
+                           "estado_fuentes": [{**fuente, "fuente": "google_flights", "nombre": "Google Flights"}]})
+    monkeypatch.setattr(run, "crear_fuentes", lambda nombres, config, aerolineas: {n: None for n in nombres})
+    monkeypatch.setattr(run, "consultar", lambda fuentes, tareas, validadores, config, limite_s: ({}, {
+        "google_flights": {"bloqueo": "Google devuelve páginas sin vuelos una y otra vez", "bloqueo_en": "mala",
+                           "bloqueo_busqueda": "mala", "errores": [], "busquedas": 0, "peticiones": 9}}))
+    run.ronda(db, None, None, forzar=False, limite_s=60)
+    mala, otra = (db.leer("busquedas", id=f"eq.{i}")[0] for i in ("mala", "otra"))
+    assert mala["proxima_revision"] > otra["proxima_revision"]  # la de la falla, al final de la cola
+    assert mala["estado"].startswith("Google no devolvió vuelos al buscar esta")
+    assert otra["estado"].startswith("En espera: Google Flights ha frenado al robot")

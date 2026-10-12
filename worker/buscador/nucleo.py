@@ -60,6 +60,8 @@ def consultar(
             except FuenteBloqueada as e:
                 log.warning("%s bloqueada: %s", nombre, e)
                 est["bloqueo"] = str(e)
+                est["bloqueo_en"] = b["id"]  # la búsqueda con la que pasó (para el aviso y para no empezar por ella)
+                est["bloqueo_busqueda"] = b.get("nombre") or ""
                 break
             except Exception as e:  # un fallo en una búsqueda no detiene las demás
                 log.error("Error en %s con la búsqueda %s…: %s", nombre, b["id"][:8], type(e).__name__)

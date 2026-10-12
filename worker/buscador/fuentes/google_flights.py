@@ -82,9 +82,11 @@ def _es_bloqueo(error: Exception) -> bool:
     )
 
 
-# Google a veces responde con una página sin vuelos (la librería ya lo reintenta 3 veces). Si pasa en dos
-# consultas seguidas no es casualidad: el robot lo trata como un bloqueo y espera antes de volver.
-SIN_DATOS_SEGUIDOS_BLOQUEO = 2
+# Google a veces responde con una página sin vuelos (la librería ya lo reintenta 3 veces). Solo es un bloqueo
+# si pasa en 3 consultas seguidas de al menos 2 búsquedas distintas: si siempre falla la misma, el problema es
+# de esa búsqueda (se marca y las demás siguen). Visto el 12/10/2026: una sola búsqueda paraba al robot entero.
+SIN_DATOS_SEGUIDOS_BLOQUEO = 3
+SIN_DATOS_BUSQUEDAS_DISTINTAS = 2
 
 
 class SinResultados(ErrorExplicado):
@@ -125,7 +127,8 @@ class GoogleFlights:
         self.incluir = [a for c in sorted(codigos_permitidos) if (a := self._aerolinea(c))]
         self._primera = True
         self.respuestas: list[str] = []  # clasificación de cada respuesta de Google (diagnóstico)
-        self._sin_datos_seguidos = 0
+        self._sin_datos: list[str] = []  # búsqueda de cada consulta seguida que vuelve sin datos
+        self._busqueda = ""
         self._vigilar_respuestas()
 
     def _vigilar_respuestas(self) -> None:
@@ -168,13 +171,14 @@ class GoogleFlights:
             if _es_bloqueo(e) or any(r.startswith("bloqueo") for r in vistas):
                 raise FuenteBloqueada(f"Google Flights ha limitado las peticiones: {e}") from e
             if type(e).__name__ == "SearchParseError":  # ninguna página con datos, tras los reintentos
-                self._sin_datos_seguidos += 1
-                if self._sin_datos_seguidos >= SIN_DATOS_SEGUIDOS_BLOQUEO:
+                self._sin_datos.append(self._busqueda)
+                if (len(self._sin_datos) >= SIN_DATOS_SEGUIDOS_BLOQUEO
+                        and len(set(self._sin_datos)) >= SIN_DATOS_BUSQUEDAS_DISTINTAS):
                     raise FuenteBloqueada("Google devuelve páginas sin vuelos una y otra vez: "
                                           "el robot hace una pausa antes de volver a intentarlo") from e
                 raise SinResultados(explicar_sin_datos(vistas)) from e
             raise
-        self._sin_datos_seguidos = 0
+        self._sin_datos = []
         return resultado
 
     # ------------------------------------------------------------------
@@ -460,6 +464,7 @@ class GoogleFlights:
 
     def buscar(self, b: dict, validador: filtros.Validador) -> ResultadoFuente:
         self.nueva_sesion_privada()
+        self._busqueda = str(b.get("id", ""))
         primera_respuesta = len(self.respuestas)
         res = ResultadoFuente()
         varios = viaje.es_varios_destinos(b)
@@ -487,18 +492,22 @@ class GoogleFlights:
                 pares += [(c.fecha_ida, c.fecha_vuelta) for c in mas_baratas] or [(fi, fv)]
             pares = list(dict.fromkeys(pares))
         else:
-            fallidas = 0
+            fallidas = seguidas = 0
             muestras = self._muestras_chollo(b)
             for fi, noches in muestras:
                 try:
                     res.calendario += self.calendario(b, fi, fi, noches)
+                    seguidas = 0
                 except FuenteBloqueada:
                     raise
                 except Exception as e:  # una fecha que falla no estropea las demás
                     fallidas += 1
+                    seguidas += 1
                     log.warning("Fecha del chollo sin precio: %s", type(e).__name__)
-            if muestras and fallidas == len(muestras):
-                res.error = f"No se pudo consultar ninguna de las {fallidas} fechas del calendario"
+                    if isinstance(e, SinResultados) and seguidas >= 2:
+                        break  # dos páginas vacías seguidas: no se gastan más consultas en esta búsqueda
+            if muestras and fallidas and not res.calendario:
+                res.error = f"No se pudo consultar ninguna fecha del calendario ({fallidas} intentos sin datos)"
             # Lo más barato entre lo visto ahora y lo acumulado en rondas anteriores
             vistos = {(c.fecha_ida, c.fecha_vuelta): c.precio for c in calendario_guardado(b)}
             vistos.update({(c.fecha_ida, c.fecha_vuelta): c.precio for c in res.calendario})

@@ -242,11 +242,12 @@ def _duracion(minutos: float) -> str:
 
 def mensaje_bloqueo(web: str, motivo: str, seguidos: int, espera_min: float, hasta: datetime, ultima_hora: int,
                     en_sesion: int, sesion_min: float, desde_ok_min: float | None, busquedas: int,
-                    maximo_hora: int | None = None) -> str:
+                    maximo_hora: int | None = None, busqueda: str = "") -> str:
     """Una web ha bloqueado al robot: cuánto llevaba y cuánto descansa (para entender sus límites)."""
     lineas = [
         f"🚧 <b>{_e(web)} ha frenado al robot</b>",
         f"Qué ha pasado: {_e(motivo)}",
+        *([f"Pasó al buscar: «{_e(busqueda)}»"] if busqueda else []),
         f"Peticiones hechas: <b>{ultima_hora} en la última hora</b> · {en_sesion} en esta sesión del robot "
         f"(lleva {_duracion(sesion_min)} en marcha)",
     ]

@@ -119,7 +119,7 @@ def avisar_estado_fuente(tg: Telegram | None, chats: list[str], nombre_web: str,
             peticiones_desde(cfg["fuente"], INICIO_SESION),
             (ahora - INICIO_SESION).total_seconds() / 60,
             (ahora - ultima_ok).total_seconds() / 60 if ultima_ok else None, busquedas,
-            GOOGLE_POR_HORA if cfg["fuente"] == "google_flights" else None,
+            GOOGLE_POR_HORA if cfg["fuente"] == "google_flights" else None, est.get("bloqueo_busqueda") or "",
         )
     elif cfg.get("bloqueos_seguidos"):
         bloqueo = _fecha_hora(cfg.get("ultima_ronda"))  # la última vuelta en que se consultó fue la del bloqueo
@@ -674,8 +674,16 @@ def ronda(db: Supabase, tg: Telegram | None, url_web: str | None, forzar: bool, 
         google = config.get("google_flights") or {}
         google_hasta = _fecha_hora(google.get("bloqueada_hasta")) if google.get("activa") else None
         google_hasta = google_hasta if google_hasta and google_hasta > ahora else None
+        culpable = (estado.get("google_flights") or {}).get("bloqueo_en")
         for b in pendientes:
             por_fuente = resultados.get(b["id"], {})
+            if not por_fuente and b["id"] == culpable:
+                # Google dejó de responder con esta: va al final de la cola, para no volver a empezar por ella
+                db.actualizar("busquedas", {"id": f"eq.{b['id']}"}, {
+                    "estado": "Google no devolvió vuelos al buscar esta; se reintenta en 20 min (las demás siguen)",
+                    "proxima_revision": (ahora + timedelta(minutes=20)).isoformat(),
+                })
+                continue
             if not por_fuente:
                 # Queda en cola para la siguiente vuelta (no se queda con una hora de revisión vieja)
                 if google_hasta:

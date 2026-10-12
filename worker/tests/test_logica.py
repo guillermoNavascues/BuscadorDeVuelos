@@ -346,7 +346,7 @@ def test_google_sin_pagina_de_resultados():
     from buscador.modelos import FuenteBloqueada
 
     g = GoogleFlights.__new__(GoogleFlights)  # sin red ni cliente real
-    g.pausa, g._primera, g.respuestas, g._sin_datos_seguidos = (0, 0), True, [], 0
+    g.pausa, g._primera, g.respuestas, g._sin_datos, g._busqueda = (0, 0), True, [], [], "b1"
 
     def sin_datos(**_):
         g.respuestas.append("página sin datos de vuelos (HTTP 200, 900 bytes)")
@@ -355,11 +355,16 @@ def test_google_sin_pagina_de_resultados():
     # Una vez: mensaje claro en español (sin el nombre técnico del error)
     with pytest.raises(SinResultados, match="página sin vuelos"):
         g._llamar(sin_datos)
-    # Dos seguidas: se respeta como un bloqueo y el robot espera
+    # Si falla siempre la misma búsqueda, es cosa de esa búsqueda: no se para el robot
+    for _ in range(3):
+        with pytest.raises(SinResultados):
+            g._llamar(sin_datos)
+    # Si falla también otra búsqueda seguida, sí: es Google, y el robot espera
+    g._busqueda = "b2"
     with pytest.raises(FuenteBloqueada):
         g._llamar(sin_datos)
     # Una respuesta buena pone la cuenta a cero
-    assert g._llamar(lambda **_: [1]) == [1] and g._sin_datos_seguidos == 0
+    assert g._llamar(lambda **_: [1]) == [1] and g._sin_datos == []
 
     def trafico_inusual(**_):
         g.respuestas.append("bloqueo (HTTP 200)")
@@ -372,7 +377,7 @@ def test_google_sin_pagina_de_resultados():
         g.respuestas.append("página de consentimiento de cookies (HTTP 200)")
         raise SearchParseError("x")
 
-    g._sin_datos_seguidos = 0
+    g._sin_datos = []
     with pytest.raises(SinResultados, match="cookies"):
         g._llamar(cookies)
 
