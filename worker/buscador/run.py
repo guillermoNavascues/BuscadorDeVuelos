@@ -21,10 +21,11 @@ import re
 import sys
 import threading
 import time
+import traceback
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 
-from . import enlaces
+from . import autoarreglo, enlaces
 from .avisos import (
     AYUDA, MENSAJE_PRUEBA, NOTA_PAUSA, TIPOS_ALARMA, Telegram, alarma, alarma_en_pausa, codigo_en_mensaje, eur,
     mensaje_accesos, mensaje_accesos_activados, mensaje_aviso, mensaje_bloqueo, mensaje_estado, mensaje_recuperada,
@@ -47,6 +48,10 @@ BLOQUEO_MAX = timedelta(hours=48)
 # y 66 + 66 seguidas al cambiar de sesión). Como mucho 90 por hora: lo que no cabe espera en la cola.
 GOOGLE_POR_HORA = 90
 CUPO_MINIMO = 6  # por debajo de esto no se empieza una revisión de Google (cada una son unas 5-15 consultas)
+# Cuándo un fallo "se repite" y merece el autoarreglo (autoarreglo.py)
+FALLOS_PARA_ARREGLO = 3  # revisiones seguidas de una búsqueda sin poder consultar
+BLOQUEOS_PARA_ARREGLO = 3  # bloqueos seguidos de Google
+COMPROBAR_VERSION_CADA_S = 10 * 60
 OPCIONES_GUARDADAS = 5
 ESPERA_ENTRE_VUELTAS_S = 60  # en modo continuo: cada minuto se mira Telegram y qué toca revisar
 MARGEN_FINAL_S = 15 * 60  # en modo continuo no se empieza una ronda si queda menos que esto
@@ -128,6 +133,20 @@ def avisar_estado_fuente(tg: Telegram | None, chats: list[str], nombre_web: str,
         return
     for chat in chats:
         tg.enviar(chat, texto)
+
+
+def _donde(e: Exception) -> str:
+    """Tipo de error y dónde pasó (archivo y línea), sin su texto: puede llevar datos de una búsqueda."""
+    marco = traceback.extract_tb(e.__traceback__)[-1] if e.__traceback__ else None
+    return f"{type(e).__name__} en {os.path.basename(marco.filename)}:{marco.lineno} ({marco.name})" if marco else type(e).__name__
+
+
+def _enviar_a_todos(db: Supabase, tg: Telegram | None, texto: str) -> None:
+    if not tg:
+        return
+    for p in db.leer("perfiles"):
+        if p.get("telegram_chat_id"):
+            tg.enviar(p["telegram_chat_id"], texto)
 
 
 def _sin_urls(texto: str) -> str:
@@ -480,15 +499,22 @@ def procesar_busqueda(
     hoy: date,
     ahora: datetime,
     errores: list[str] | None = None,
+    problemas: list[str] | None = None,
 ) -> bool:
     """Guarda el historial, decide si avisar y actualiza la búsqueda. Devuelve True si avisó."""
     if not validas and not rechazos and errores:
         # Ninguna web pudo responder: no es que no haya vuelos. Se reintenta pronto.
+        info = dict(b.get("info") or {})
+        info["fallos_seguidos"] = int(info.get("fallos_seguidos") or 0) + 1
         db.actualizar("busquedas", {"id": f"eq.{b['id']}"}, {
             "ultima_revision": ahora.isoformat(),
             "proxima_revision": (ahora + timedelta(minutes=20)).isoformat(),
             "estado": "No se pudo consultar en esta ronda: " + _sin_urls(errores[0])[:150],
+            "info": info,
         })
+        if problemas is not None and info["fallos_seguidos"] == FALLOS_PARA_ARREGLO:
+            problemas.append(f"Una búsqueda ({autoarreglo.forma_busqueda(b)}) no se ha podido consultar en "
+                             f"{FALLOS_PARA_ARREGLO} revisiones seguidas: {_sin_urls(errores[0])[:150]}")
         return False
 
     filtros_historial = {"busqueda": f"eq.{b['id']}", "es_mejor": "eq.true", "select": "precio_total,revisado",
@@ -506,6 +532,7 @@ def procesar_busqueda(
     decision = decidir(b, mejor, historial, calendario, hoy, horas_historial=horas)
 
     info = dict(b.get("info") or {})
+    info.pop("fallos_seguidos", None)  # se ha podido consultar
     info["opciones_validas"] = len(validas)
     info["rechazos"] = dict(rechazos.most_common(4))
     info["fuentes"] = fuentes_usadas
@@ -628,6 +655,7 @@ def ronda(db: Supabase, tg: Telegram | None, url_web: str | None, forzar: bool, 
         return None
 
     t0 = time.monotonic()
+    problemas: list[str] = []  # fallos que se repiten: si hay, se pide el autoarreglo al terminar
     ejecucion = db.insertar("ejecuciones", {"inicio": ahora.isoformat()}, devolver=True)[0]
     resumen: dict = {"forzada": forzar, "avisos": 0, "revisadas": 0, "errores": [],
                      "pendientes": len(pendientes), "fuentes_en_ronda": listas}
@@ -662,6 +690,11 @@ def ronda(db: Supabase, tg: Telegram | None, url_web: str | None, forzar: bool, 
                                ultimo_error=est["errores"][-1] if est["errores"] else None)
             db.actualizar("estado_fuentes", {"fuente": f"eq.{nombre}"}, cambios)
             config[nombre] = {**cfg, **cambios}
+            if est["bloqueo"] and cambios["bloqueos_seguidos"] == BLOQUEOS_PARA_ARREGLO:
+                con = next((b for b in pendientes if b["id"] == est.get("bloqueo_en")), None)
+                problemas.append(f"{cfg.get('nombre') or nombre} ha frenado al robot {BLOQUEOS_PARA_ARREGLO} veces seguidas: "
+                                 f"{_sin_urls(est['bloqueo'])}"
+                                 + (f" (la última, con una búsqueda: {autoarreglo.forma_busqueda(con)})" if con else ""))
             if est["bloqueo"] or cfg.get("bloqueos_seguidos"):  # se bloquea, o vuelve a responder tras un bloqueo
                 try:
                     avisar_estado_fuente(tg, chats, cfg.get("nombre") or nombre, {**cfg, "fuente": nombre}, est, cambios,
@@ -714,15 +747,17 @@ def ronda(db: Supabase, tg: Telegram | None, url_web: str | None, forzar: bool, 
                          b["id"][:8], len(validas), dict(rechazos) or "ninguna")
                 errores = [r.error for r in por_fuente.values() if r.error and not r.opciones]
                 if procesar_busqueda(db, b, validas, rechazos, calendario, list(por_fuente), perfiles.get(b["usuario"]),
-                                     aerolineas, tg, url_web, hoy, ahora, errores):
+                                     aerolineas, tg, url_web, hoy, ahora, errores, problemas=problemas):
                     resumen["avisos"] += 1
                 resumen["revisadas"] += 1
             except Exception as e:
                 log.error("Error procesando la búsqueda %s…: %s", b["id"][:8], type(e).__name__)
                 resumen["errores"].append(f"{b.get('nombre')}: {type(e).__name__}: {e}"[:300])
+                problemas.append(f"Fallo del código al procesar una búsqueda ({autoarreglo.forma_busqueda(b)}): {_donde(e)}")
     except Exception as e:
         log.error("Fallo en la ronda: %s", type(e).__name__)
         resumen["errores"].append(f"Fallo en la ronda: {type(e).__name__}: {e}"[:500])
+        problemas.append(f"Una vuelta del robot se ha caído: {_donde(e)}")
     finally:
         duracion = int(time.monotonic() - t0)
         db.actualizar("ejecuciones", {"id": f"eq.{ejecucion['id']}"},
@@ -730,6 +765,12 @@ def ronda(db: Supabase, tg: Telegram | None, url_web: str | None, forzar: bool, 
         # Solo números en el registro: si el repositorio es público, cualquiera puede leerlo.
         log.info("Ronda terminada en %s s: %s revisadas, %s avisos, %s incidencias",
                  duracion, resumen["revisadas"], resumen["avisos"], len(resumen["errores"]))
+    if problemas:
+        try:
+            autoarreglo.pedir_arreglo(db, autoarreglo.GitHub.desde_entorno(), lambda texto: _enviar_a_todos(db, tg, texto),
+                                      problemas, ahora, peticiones_ultima_hora(db, "google_flights", ahora))
+        except Exception as e:  # pedir ayuda nunca debe parar al robot
+            log.warning("Autoarreglo: %s", type(e).__name__)
     return resumen
 
 
@@ -781,6 +822,9 @@ def main(argv: list[str] | None = None) -> int:
 
     ultima_limpieza = None
     codigo_salida = 0
+    gh = autoarreglo.GitHub.desde_entorno() if fin else None
+    version, rama = os.environ.get("GITHUB_SHA"), os.environ.get("GITHUB_REF_NAME")
+    ultima_comprobacion = time.monotonic()
     while True:
         ahora = datetime.now(timezone.utc)
         try:
@@ -806,6 +850,13 @@ def main(argv: list[str] | None = None) -> int:
                 codigo_salida = 1
         if not fin or time.monotonic() + ESPERA_ENTRE_VUELTAS_S >= fin:
             break
+        # ¿Una versión nueva (p. ej. un arreglo aprobado)? Esta sesión termina y la siguiente arranca con ella
+        if gh and time.monotonic() - ultima_comprobacion >= COMPROBAR_VERSION_CADA_S:
+            ultima_comprobacion = time.monotonic()
+            if autoarreglo.hay_version_nueva(gh, version, rama):
+                log.info("Hay una versión nueva del robot: esta sesión termina y la siguiente arranca con ella")
+                autoarreglo.marcar_actualizacion()
+                break
         time.sleep(ESPERA_ENTRE_VUELTAS_S)
 
     if atencion:

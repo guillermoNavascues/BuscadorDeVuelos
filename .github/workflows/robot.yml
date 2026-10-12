@@ -26,7 +26,8 @@ jobs:
     timeout-minutes: 355
     permissions:
       contents: write  # para "Mantener activas las rondas programadas"
-      actions: write   # para lanzar la siguiente sesión
+      actions: write   # para lanzar la siguiente sesión (y el autoarreglo)
+      issues: write    # para abrir el aviso del autoarreglo
     steps:
       - name: Anotar la hora de inicio
         run: echo "INICIO_SESION=$(date +%s)" >> "$GITHUB_ENV"
@@ -54,6 +55,8 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           URL_WEB: ${{ vars.URL_WEB }}
           FORZAR: ${{ inputs.forzar && '1' || '' }}
+          # Para el autoarreglo y para actualizarse solo (token de esta ejecución, caduca al terminar)
+          GITHUB_TOKEN: ${{ github.token }}
         run: python -m buscador.run --continuo 345
 
       # En un repositorio público, GitHub desactiva la programación tras 60 días sin cambios.
@@ -72,7 +75,7 @@ jobs:
 
       # Encadenar la siguiente sesión. Solo si esta ha durado al menos 30 min: si algo falla
       # nada más arrancar, no se entra en un bucle de sesiones fallidas (el respaldo de cada
-      # 2 horas lo volverá a intentar).
+      # 2 horas lo volverá a intentar). O si el robot ha terminado antes porque hay una versión nueva.
       - name: Lanzar la siguiente sesión
         if: ${{ !cancelled() }}
         env:
@@ -80,7 +83,7 @@ jobs:
         run: |
           duracion=$(( $(date +%s) - INICIO_SESION ))
           echo "Esta sesión ha durado $(( duracion / 60 )) min"
-          if [ "$duracion" -ge 1800 ]; then
+          if [ "$duracion" -ge 1800 ] || [ "${ACTUALIZACION:-0}" = "1" ]; then
             gh workflow run robot.yml --repo "${{ github.repository }}" --ref "${{ github.ref_name }}" -f forzar=false
           else
             echo "Sesión demasiado corta: no se encadena (se reintentará con la programación)."

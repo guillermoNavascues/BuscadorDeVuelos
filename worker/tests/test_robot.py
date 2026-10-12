@@ -557,3 +557,92 @@ def test_la_busqueda_con_la_que_falla_google_va_al_final_de_la_cola(monkeypatch)
     assert mala["proxima_revision"] > otra["proxima_revision"]  # la de la falla, al final de la cola
     assert mala["estado"].startswith("Google no devolvió vuelos al buscar esta")
     assert otra["estado"].startswith("En espera: Google Flights ha frenado al robot")
+
+
+# ---------------- autoarreglo y actualización sola ----------------
+
+class GitHubFalso:
+    def __init__(self, abierto=False, ultimo="nuevo", archivos=("worker/buscador/run.py",)):
+        self.repo, self.abierto, self.ultimo, self.archivos = "yo/robot", abierto, ultimo, list(archivos)
+        self.avisos, self.lanzados = [], []
+
+    def hay_aviso_abierto(self):
+        return self.abierto
+
+    def abrir_aviso(self, titulo, cuerpo):
+        self.avisos.append((titulo, cuerpo))
+        return {"number": 7, "html_url": "https://github.com/yo/robot/issues/7"}
+
+    def lanzar_arreglo(self, numero, rama):
+        self.lanzados.append((numero, rama))
+        return True
+
+    def ultimo_commit(self, rama):
+        return self.ultimo
+
+    def archivos_cambiados(self, desde, hasta):
+        return self.archivos
+
+
+def test_autoarreglo_abre_aviso_sin_datos_personales_y_como_mucho_cada_12_horas():
+    from buscador import autoarreglo
+
+    b = {"id": "b1", "nombre": "Puente en París", "modo": "fechas", "ida_vuelta": True, "origen": "SVQ", "destino": "ORY",
+         "fecha_ida": "2027-01-10", "fecha_vuelta": "2027-01-12", "flex_dias": 2, "fechas_extra": [{"ida": "2027-01-20"}],
+         "escalas_max": 1, "ida_salida_min": 6}
+    forma = autoarreglo.forma_busqueda(b)
+    assert "±2 días" in forma and "1 fecha(s) alternativa(s)" in forma and "con franjas horarias" in forma
+    assert not any(dato in forma for dato in ("París", "SVQ", "ORY", "2027"))  # el repositorio es público
+
+    db, gh, telegram = BaseDeDatosFalsa({"ajustes": []}), GitHubFalso(), []
+    ahora = datetime(2026, 10, 12, 10, 0, tzinfo=timezone.utc)
+    problemas = [f"Una búsqueda ({forma}) no se ha podido consultar en 3 revisiones seguidas"]
+    assert autoarreglo.pedir_arreglo(db, gh, telegram.append, problemas, ahora, 40) is True
+    titulo, cuerpo = gh.avisos[0]
+    assert titulo.startswith("Autoarreglo:") and "40" in cuerpo and "París" not in cuerpo
+    assert gh.lanzados == [(7, "main")] and "issues/7" in telegram[0]
+    # A las 6 horas no se vuelve a pedir; a las 13, sí (si no queda otro aviso abierto)
+    assert autoarreglo.pedir_arreglo(db, gh, telegram.append, problemas, ahora + timedelta(hours=6), 40) is False
+    gh.abierto = True
+    assert autoarreglo.pedir_arreglo(db, gh, telegram.append, problemas, ahora + timedelta(hours=13), 40) is False
+    gh.abierto = False
+    assert autoarreglo.pedir_arreglo(db, gh, telegram.append, problemas, ahora + timedelta(hours=13), 40) is True
+    # Fuera de GitHub (en tu PC) no hace nada
+    assert autoarreglo.pedir_arreglo(db, None, telegram.append, problemas, ahora + timedelta(days=2), 40) is False
+
+
+def test_una_busqueda_que_falla_tres_veces_seguidas_pide_el_autoarreglo():
+    from collections import Counter
+
+    from test_logica import busqueda
+
+    db = BaseDeDatosFalsa({"busquedas": [busqueda()], "precios": [], "avisos": []})
+    problemas = []
+    ahora = datetime.now(timezone.utc)
+    for _ in range(3):
+        b = db.leer("busquedas")[0]
+        run.procesar_busqueda(db, b, [], Counter(), [], ["google_flights"], None, {}, None, None, ahora.date(), ahora,
+                              ["Google ha devuelto una página sin vuelos"], problemas=problemas)
+    assert db.leer("busquedas")[0]["info"]["fallos_seguidos"] == 3
+    assert len(problemas) == 1 and "3 revisiones seguidas" in problemas[0] and "prueba" not in problemas[0]
+
+
+def test_actualizacion_sola_con_una_version_nueva(tmp_path, monkeypatch):
+    from buscador import autoarreglo
+
+    assert autoarreglo.hay_version_nueva(GitHubFalso(), "viejo", "main") is True
+    assert autoarreglo.hay_version_nueva(GitHubFalso(ultimo="viejo"), "viejo", "main") is False  # ya es la última
+    assert autoarreglo.hay_version_nueva(GitHubFalso(archivos=["web/js/app.js"]), "viejo", "main") is False  # solo la web
+    assert autoarreglo.hay_version_nueva(None, "viejo", "main") is False
+    fichero = tmp_path / "entorno"
+    monkeypatch.setenv("GITHUB_ENV", str(fichero))
+    autoarreglo.marcar_actualizacion()
+    assert fichero.read_text() == "ACTUALIZACION=1" + chr(10)
+
+
+def test_donde_dice_el_sitio_del_fallo_sin_su_texto():
+    try:
+        {}["Puente en París"]
+    except KeyError as e:
+        texto = run._donde(e)
+    assert texto.startswith("KeyError en test_robot.py:") and "París" not in texto

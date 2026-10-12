@@ -129,6 +129,29 @@ una en marcha y, si la cadena se hubiera cortado, la vuelve a arrancar.
 - Crea una búsqueda: en uno o dos minutos verás el primer precio. Ábrela con **En directo**: la gráfica, las
   estadísticas y la lista de cambios de precio se actualizan solas en cuanto el robot encuentra un precio distinto.
 
+## 8. Autoarreglo con Claude (opcional)
+
+Si el robot ve un fallo que se repite (Google lo frena 3 veces seguidas, una búsqueda no se puede consultar en
+3 revisiones seguidas o una vuelta se cae por un error del código), abre un aviso (*issue*) en el repositorio con los
+datos técnicos —sin rutas, fechas, precios ni nombres—, te escribe por Telegram y lanza el flujo **Autoarreglo del
+robot**: Claude investiga, prepara el arreglo, pasa las pruebas y abre una **propuesta de cambio** (*pull request*).
+Tú la apruebas (**Merge**) y el robot se actualiza solo en unos minutos. Como mucho pide un arreglo cada 12 horas.
+
+1. En tu ordenador, con Claude Code instalado, ejecuta `claude setup-token` e inicia sesión con tu cuenta de Claude
+   (sirve el plan **Pro** o **Max**; el autoarreglo gasta del mismo límite de uso). Copia el código que te da.
+2. GitHub → tu repositorio → **Settings → Secrets and variables → Actions → New repository secret**:
+   nombre `CLAUDE_CODE_OAUTH_TOKEN` y, como valor, ese código. No lo pegues en ningún otro sitio.
+3. GitHub → **Settings → Actions → General → Workflow permissions**: marca
+   **Allow GitHub Actions to create and approve pull requests** y pulsa **Save** (para que pueda abrir la propuesta).
+4. Para enterarte en el móvil: en la app de GitHub, activa las notificaciones del repositorio (*Watch*). La propuesta
+   se revisa y se aprueba desde ahí.
+
+Sin el secreto no pasa nada: el robot abre igualmente el aviso y el flujo deja dicho en él que falta el secreto.
+
+**Actualización sola:** cada 10 minutos el robot mira si hay una versión nueva en GitHub (un arreglo aprobado o
+cualquier cambio en `worker/`). Si la hay, termina la sesión y la siguiente arranca ya con ella: no hace falta
+reiniciarlo a mano.
+
 ---
 
 ## Mantenimiento
