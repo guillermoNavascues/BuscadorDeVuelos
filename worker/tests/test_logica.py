@@ -444,3 +444,25 @@ def test_viaje_con_varios_destinos(monkeypatch):
     assert "antes" in validador.opcion(al_reves)
     # Y si falta un vuelo del viaje, tampoco
     assert validador.opcion(Opcion("x", mejor.ida, None, 1)) == "faltan vuelos del viaje"
+
+
+def test_sin_vuelos_con_tus_filtros_no_es_un_fallo(monkeypatch):
+    from buscador.fuentes import google_flights as gf
+
+    def preparar(respuesta):
+        g = gf.GoogleFlights.__new__(gf.GoogleFlights)  # sin red
+        g.respuestas, g._sin_datos, g._busqueda = [], [], ""
+        g.nueva_sesion_privada = lambda: None
+
+        def vuelos(b, fi, fv, validador):
+            g.respuestas.append(respuesta)
+            return []
+        g.vuelos = vuelos
+        return g
+
+    b = busqueda(escalas_max=0)
+    # Google respondió con su página de resultados normal: no hay vuelos que cumplan los filtros
+    assert preparar("página de resultados (HTTP 200)").buscar(b, Validador(b, AEROLINEAS)).error is None
+    # Otra cosa (aviso de cookies, página sin datos...): eso sí es un fallo
+    res = preparar("página de consentimiento de cookies (HTTP 200)").buscar(b, Validador(b, AEROLINEAS))
+    assert res.error and "cookies" in res.error

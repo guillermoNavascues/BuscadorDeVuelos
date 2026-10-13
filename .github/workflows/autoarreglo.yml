@@ -85,9 +85,10 @@ jobs:
                `cd worker && python -m pytest -q tests` y `cd worker && python -m pyflakes buscador tests`.
                Haz commit, `git push -u origin ${{ steps.rama.outputs.nombre }}` y abre la propuesta con
                `gh pr create --base main`: título en español y, en la descripción, la causa, el arreglo, cómo lo has
-               probado y la línea «Arregla #${{ inputs.aviso }}».
+               probado y la línea «Closes #${{ inputs.aviso }}» (en inglés: así GitHub cierra el aviso al aprobarla).
             4. Si no se arregla con código (por ejemplo, si Google limita las direcciones de GitHub), no cambies nada:
-               comenta en el aviso (`gh issue comment ${{ inputs.aviso }}`) qué pasa y qué recomiendas.
+               comenta en el aviso (`gh issue comment ${{ inputs.aviso }}`) qué pasa y qué recomiendas, y ciérralo
+               (`gh issue close ${{ inputs.aviso }}`): si el fallo sigue, el robot abrirá otro dentro de 12 horas.
 
             Reglas:
             - El repositorio es público: nada de datos personales en commits, propuestas ni comentarios.

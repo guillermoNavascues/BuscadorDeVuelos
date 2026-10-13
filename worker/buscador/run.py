@@ -554,7 +554,8 @@ def procesar_busqueda(
         motivo, veces = rechazos.most_common(1)[0]
         cambios["estado"] = f"Ningún vuelo cumple tus filtros (motivo principal: {motivo}, {veces} vuelos)"
     else:
-        cambios["estado"] = "No se han encontrado vuelos para esta ruta y fechas"
+        cambios["estado"] = ("No hay vuelos que cumplan tus filtros para esas fechas (Google sí respondió): prueba a "
+                             "permitir escalas, quitar franjas horarias o ampliar las fechas")
 
     avisado = False
     if decision.avisar and mejor:
@@ -708,6 +709,7 @@ def ronda(db: Supabase, tg: Telegram | None, url_web: str | None, forzar: bool, 
         google_hasta = _fecha_hora(google.get("bloqueada_hasta")) if google.get("activa") else None
         google_hasta = google_hasta if google_hasta and google_hasta > ahora else None
         culpable = (estado.get("google_flights") or {}).get("bloqueo_en")
+        con_google = sin_vuelos = 0  # si Google responde bien pero ninguna búsqueda tiene vuelos, algo raro pasa
         for b in pendientes:
             por_fuente = resultados.get(b["id"], {})
             if not por_fuente and b["id"] == culpable:
@@ -750,10 +752,17 @@ def ronda(db: Supabase, tg: Telegram | None, url_web: str | None, forzar: bool, 
                                      aerolineas, tg, url_web, hoy, ahora, errores, problemas=problemas):
                     resumen["avisos"] += 1
                 resumen["revisadas"] += 1
+                g = por_fuente.get("google_flights")
+                if g and not g.error:
+                    con_google += 1
+                    sin_vuelos += not g.opciones
             except Exception as e:
                 log.error("Error procesando la búsqueda %s…: %s", b["id"][:8], type(e).__name__)
                 resumen["errores"].append(f"{b.get('nombre')}: {type(e).__name__}: {e}"[:300])
                 problemas.append(f"Fallo del código al procesar una búsqueda ({autoarreglo.forma_busqueda(b)}): {_donde(e)}")
+        if con_google >= 3 and sin_vuelos == con_google:
+            problemas.append(f"Google responde con su página de resultados, pero ninguna de las {con_google} búsquedas de "
+                             "esta vuelta tiene vuelos: puede que Google haya cambiado su página")
     except Exception as e:
         log.error("Fallo en la ronda: %s", type(e).__name__)
         resumen["errores"].append(f"Fallo en la ronda: {type(e).__name__}: {e}"[:500])

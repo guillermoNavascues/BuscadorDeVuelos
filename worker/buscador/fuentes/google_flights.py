@@ -525,8 +525,11 @@ class GoogleFlights:
         if any(r.startswith("bloqueo") for r in recientes):
             raise FuenteBloqueada("Google Flights ha respondido con su página de tráfico inusual")
         if not res.opciones and (pares or varios) and not res.error:
-            tipos = sorted(set(recientes)) or ["ninguna respuesta"]
-            res.error = "Google no devolvió vuelos. Respuestas: " + " | ".join(tipos)
+            # Si Google respondió con su página de resultados normal, es que no hay vuelos que cumplan los
+            # filtros (p. ej. solo directos con franjas horarias): no es un fallo. Visto en el aviso #2.
+            if not recientes or not all(r.startswith("página de resultados") for r in recientes):
+                tipos = sorted(set(recientes)) or ["ninguna respuesta"]
+                res.error = "Google no devolvió vuelos. Respuestas: " + " | ".join(tipos)
         return res
 
 

@@ -561,9 +561,10 @@ export async function vistaFormulario(app, id, duplicar = false) {
     const idaVuelta = esIdaVuelta();
     if (tipoViaje() !== tipoPintado) {
       tipoPintado = tipoViaje();
+      // Los vuelos, antes que el calendario: al cambiar de una fecha a dos, el calendario vuelve a llamar aquí
+      if (varios) prepararTramos();
       principal.ponerRango(idaVuelta);
       pintarExtras();
-      if (varios) prepararTramos();
     }
     $("#ayuda-tipo").textContent = modo === "chollo"
       ? "Varios destinos solo está con fechas concretas."
@@ -593,8 +594,8 @@ export async function vistaFormulario(app, id, duplicar = false) {
     // Resumen en vivo
     const pax = num("adultos") + num("ninos") + num("bebes");
     const otras = extras.filter((p) => p.ida).length;
-    const fechas = varios
-      ? `${tramos.length} vuelos · ${fecha(tramos[0].fecha) || "—"} → ${fecha(tramos.at(-1).fecha) || "—"}`
+    const fechas = varios && tramos
+      ? `${tramos.length} vuelos ·${fecha(tramos[0].fecha) || "—"} → ${fecha(tramos.at(-1).fecha) || "—"}`
       : modo === "fechas"
         ? `${fecha($("#fecha_ida").value) || "—"}${idaVuelta ? ` → ${fecha($("#fecha_vuelta").value) || "—"}` : ""}${num("flex_dias") ? ` (±${num("flex_dias")} d)` : ""}${otras ? ` · y ${otras} fecha${otras > 1 ? "s" : ""} más` : ""}`
         : `Del ${fecha($("#chollo_desde").value) || "—"} al ${fecha($("#chollo_hasta").value) || "—"}`;
