@@ -433,23 +433,33 @@ def test_aviso_por_telegram_al_bloquear_y_al_recuperarse(monkeypatch):
            "ultima_ronda": (ahora - timedelta(minutes=25)).isoformat()}
     est = {"bloqueo": "Google Flights ha respondido con su página de tráfico inusual https://www.google.com/sorry/x",
            "peticiones": 12, "errores": []}
-    cambios = {"bloqueos_seguidos": 1, "bloqueada_hasta": (ahora + timedelta(minutes=60)).isoformat()}
-    run.avisar_estado_fuente(tg, ["99"], "Google Flights", cfg, est, cambios, ahora, 4)
+    # Un bloqueo suelto no se avisa (desde GitHub es normal de vez en cuando y el robot sigue solo)
+    run.avisar_estado_fuente(tg, ["99"], "Google Flights", cfg, est,
+                             {"bloqueos_seguidos": 1, "bloqueada_hasta": (ahora + timedelta(minutes=20)).isoformat()}, ahora, 4)
+    assert tg.enviados == []
+    # El segundo seguido, sí
+    cambios = {"bloqueos_seguidos": 2, "bloqueada_hasta": (ahora + timedelta(minutes=60)).isoformat()}
+    run.avisar_estado_fuente(tg, ["99"], "Google Flights", {**cfg, "bloqueos_seguidos": 1}, est, cambios, ahora, 4)
     texto = tg.enviados[0][1]
     assert tg.enviados[0][0] == "99" and "ha frenado al robot" in texto
     assert "37 en la última hora" in texto and "67 en esta sesión" in texto and "2 h 00 min" in texto
     assert "máximo 90 consultas por hora" in texto
     assert "hace 25 min" in texto and "descansa 1 h 00 min" in texto and "hasta las 13:00" in texto  # hora de Madrid (UTC+2 en octubre)
-    assert "Primer bloqueo" in texto and "sorry" not in texto  # sin direcciones
+    assert "Bloqueo nº 2 seguido" in texto and "sorry" not in texto  # sin direcciones
     run.avisar_estado_fuente(tg, ["99"], "Google Flights", cfg, {**est, "bloqueo_busqueda": "Puente en París"}, cambios, ahora, 4)
     assert "Pasó al buscar: «Puente en París»" in tg.enviados[-1][1]
     tg.enviados.pop()
 
-    # Cuando vuelve a responder, otro mensaje con lo que ha durado la pausa
+    # Cuando vuelve a responder tras un bloqueo avisado, otro mensaje con lo que ha durado la pausa
     tg.enviados.clear()
-    run.avisar_estado_fuente(tg, ["99"], "Google Flights", {**cfg, "bloqueos_seguidos": 1, "ultima_ronda": ahora.isoformat()},
+    run.avisar_estado_fuente(tg, ["99"], "Google Flights", {**cfg, "bloqueos_seguidos": 2, "ultima_ronda": ahora.isoformat()},
                              {"bloqueo": None, "peticiones": 8, "errores": []}, {}, ahora + timedelta(minutes=75), 4)
     assert "vuelve a responder" in tg.enviados[0][1] and "1 h 15 min" in tg.enviados[0][1]
+    # Tras un bloqueo suelto (que no se avisó), tampoco se avisa de la vuelta a la normalidad
+    tg.enviados.clear()
+    run.avisar_estado_fuente(tg, ["99"], "Google Flights", {**cfg, "bloqueos_seguidos": 1, "ultima_ronda": ahora.isoformat()},
+                             {"bloqueo": None, "peticiones": 8, "errores": []}, {}, ahora + timedelta(minutes=25), 4)
+    assert tg.enviados == []
 
     # Funcionando normal: ningún mensaje; y sin Telegram vinculado, tampoco
     tg.enviados.clear()

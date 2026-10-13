@@ -25,7 +25,7 @@ function estadoRobot(latido) {
   if (minutos !== null && minutos < 5) {
     return {
       clase: "activo", punto: "", etiqueta: "En directo", titulo: "Buscando vuelos sin parar",
-      texto: "Cada minuto mira Telegram y revisa las búsquedas a las que les toca: cada 20 min si el viaje es dentro de menos de 2 meses y cada 40 si falta más, con 90 consultas a Google por hora como mucho (lo que no cabe espera en cola). Si una web lo frena, descansa solo y te avisa por Telegram.",
+      texto: "Cada minuto mira Telegram y revisa las búsquedas a las que les toca: cada 20 min si el viaje es dentro de menos de 2 meses y cada 40 si falta más, con 90 consultas a Google por hora como mucho (lo que no cabe espera en cola). Si una web lo frena, descansa solo (20 min la primera vez) y sigue; si pasa varias veces seguidas, te avisa por Telegram.",
     };
   }
   if (minutos !== null && minutos < 180) {

@@ -51,6 +51,7 @@ CUPO_MINIMO = 6  # por debajo de esto no se empieza una revisión de Google (cad
 # Cuándo un fallo "se repite" y merece el autoarreglo (autoarreglo.py)
 FALLOS_PARA_ARREGLO = 3  # revisiones seguidas de una búsqueda sin poder consultar
 BLOQUEOS_PARA_ARREGLO = 3  # bloqueos seguidos de Google
+AVISAR_DESDE_BLOQUEO = 2  # un bloqueo suelto no se avisa por Telegram; desde el segundo seguido, sí
 COMPROBAR_VERSION_CADA_S = 10 * 60
 OPCIONES_GUARDADAS = 5
 ESPERA_ENTRE_VUELTAS_S = 60  # en modo continuo: cada minuto se mira Telegram y qué toca revisar
@@ -112,10 +113,14 @@ def peticiones_ultima_hora(db: Supabase, fuente: str, ahora: datetime) -> int:
 
 def avisar_estado_fuente(tg: Telegram | None, chats: list[str], nombre_web: str, cfg: dict, est: dict, cambios: dict,
                          ahora: datetime, busquedas: int, ultima_hora: int | None = None) -> None:
-    """Telegram cuando una web bloquea al robot y cuando vuelve a responder."""
+    """Telegram cuando una web bloquea al robot varias veces seguidas, y cuando vuelve a responder tras eso.
+    Un bloqueo suelto no se avisa: desde los servidores de GitHub es normal de vez en cuando (Google responde
+    bien a la misma búsqueda desde casa, visto el 13/10/2026) y el robot descansa 20 min y sigue solo."""
     if not tg or not chats:
         return
     if est["bloqueo"]:
+        if cambios["bloqueos_seguidos"] < AVISAR_DESDE_BLOQUEO:
+            return
         hasta = _fecha_hora(cambios["bloqueada_hasta"])
         ultima_ok = _fecha_hora(cfg.get("ultima_ok"))
         texto = mensaje_bloqueo(
@@ -126,7 +131,7 @@ def avisar_estado_fuente(tg: Telegram | None, chats: list[str], nombre_web: str,
             (ahora - ultima_ok).total_seconds() / 60 if ultima_ok else None, busquedas,
             GOOGLE_POR_HORA if cfg["fuente"] == "google_flights" else None, est.get("bloqueo_busqueda") or "",
         )
-    elif cfg.get("bloqueos_seguidos"):
+    elif (cfg.get("bloqueos_seguidos") or 0) >= AVISAR_DESDE_BLOQUEO:  # solo si te avisé del bloqueo
         bloqueo = _fecha_hora(cfg.get("ultima_ronda"))  # la última vuelta en que se consultó fue la del bloqueo
         texto = mensaje_recuperada(nombre_web, (ahora - bloqueo).total_seconds() / 60 if bloqueo else 0, est["peticiones"])
     else:
