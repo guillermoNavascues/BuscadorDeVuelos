@@ -63,8 +63,8 @@ class Ryanair:
         r.raise_for_status()
         return r.json()
 
-    def buscar(self, b: dict, validador: filtros.Validador) -> ResultadoFuente:
-        res = ResultadoFuente()
+    def _consulta(self, b: dict, origen: str, destino: str | None) -> dict | None:
+        """Tarifas de Ryanair para tus fechas (o tu periodo de chollo); sin destino, a todos sus destinos."""
         if b["modo"] == "fechas":
             fi = date.fromisoformat(str(b["fecha_ida"]))
             flex = b.get("flex_dias") or 0
@@ -77,20 +77,20 @@ class Ryanair:
             noches_min, noches_max = b.get("noches_min"), b.get("noches_max")
         ida_desde = max(ida_desde, hoy() + timedelta(days=1))
         if ida_hasta < ida_desde:
-            return res
+            return None
 
         sal_min, sal_max, _, _ = filtros.franja(b, "ida")
         params = {
-            "departureAirportIataCode": b["origen"],
-            "arrivalAirportIataCode": b["destino"],
+            "departureAirportIataCode": origen,
             "outboundDepartureDateFrom": ida_desde.isoformat(),
             "outboundDepartureDateTo": ida_hasta.isoformat(),
             "outboundDepartureTimeFrom": _hora(sal_min, False),
             "outboundDepartureTimeTo": _hora(sal_max, True),
             "currency": "EUR",
             "market": "es-es",
-            "limit": 10,
         }
+        if destino:
+            params.update(arrivalAirportIataCode=destino, limit=10)
         if b.get("ida_vuelta"):
             vsal_min, vsal_max, _, _ = filtros.franja(b, "vuelta")
             params.update({
@@ -101,11 +101,25 @@ class Ryanair:
                 "durationFrom": noches_min,
                 "durationTo": noches_max,
             })
-            datos = self._get("roundTripFares", params)
-        else:
-            datos = self._get("oneWayFares", params)
-        res.peticiones = 1
+            return self._get("roundTripFares", params)
+        return self._get("oneWayFares", params)
 
+    def buscar(self, b: dict, validador: filtros.Validador) -> ResultadoFuente:
+        res = ResultadoFuente()
+        datos = self._consulta(b, b["origen"], b["destino"])
+        if datos is None:
+            return res
+        res.peticiones = 1
+        res.opciones = self._opciones(b, datos)
+        return res
+
+    def cualquier_destino(self, b: dict, origen: str) -> list[Opcion]:
+        """La tarifa más barata a cada destino de Ryanair desde un aeropuerto (una sola petición)."""
+        datos = self._consulta(b, origen, None)
+        return self._opciones(b, datos) if datos else []
+
+    def _opciones(self, b: dict, datos: dict) -> list[Opcion]:
+        opciones: list[Opcion] = []
         pasajeros = (b.get("adultos") or 1) + (b.get("ninos") or 0)
         bebes = b.get("bebes") or 0
         for tarifa in datos.get("fares", []):
@@ -119,7 +133,7 @@ class Ryanair:
                 log.warning("Tarifa de Ryanair con formato inesperado: %s", e)
                 continue
             vuelos = 2 if vuelta else 1
-            res.opciones.append(
+            opciones.append(
                 Opcion(
                     fuente=self.nombre,
                     ida=ida,
@@ -128,4 +142,4 @@ class Ryanair:
                     notas=[NOTA],
                 )
             )
-        return res
+        return opciones

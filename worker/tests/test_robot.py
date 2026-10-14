@@ -656,3 +656,35 @@ def test_donde_dice_el_sitio_del_fallo_sin_su_texto():
     except KeyError as e:
         texto = run._donde(e)
     assert texto.startswith("KeyError en test_robot.py:") and "París" not in texto
+
+
+
+def test_cualquier_destino_guarda_el_top_y_avisa_con_la_lista():
+    from collections import Counter
+
+    from test_logica import AEROLINEAS, _ida_vuelta, busqueda_cualquiera
+
+    from buscador import precios
+    from buscador.avisos import ruta_txt
+    from buscador.decision import Decision
+
+    b = busqueda_cualquiera()
+    assert ruta_txt(b) == "Sevilla (SVQ) o Jerez de la Frontera (XRY) → cualquier destino"
+    validas = [_ida_vuelta("FR", "SVQ", d, p) for d, p in (("PMI", 30), ("RAK", 31), ("BGY", 45), ("BVA", 50), ("OPO", 55))]
+    for op in validas:
+        precios.calcular(op, b, None, AEROLINEAS)
+    db, tg = BaseDeDatosFalsa({"busquedas": [b], "precios": [], "avisos": []}), TelegramFalso([])
+    ahora = datetime.now(timezone.utc)
+    original = run.decidir
+    run.decidir = lambda *a, **k: Decision(True, "chollo", "🔥 ¡Chollo encontrado! −40 %", "motivo", True)
+    try:
+        run.procesar_busqueda(db, db.leer("busquedas")[0], validas, Counter(), [], ["ryanair"],
+                              {"telegram_chat_id": "99"}, AEROLINEAS, tg, None, ahora.date(), ahora)
+    finally:
+        run.decidir = original
+    guardada = db.leer("busquedas")[0]
+    assert [t["destino"] for t in guardada["info"]["top_destinos"]] == ["PMI", "RAK", "BGY", "BVA", "OPO"]
+    assert guardada["estado"].startswith("5 destinos con tus filtros · el más barato: ") and "PMI" in guardada["estado"]
+    assert len(db.leer("precios")) == 5  # un destino por fila: la web enseña el top con sus vuelos
+    texto = tg.enviados[0][1]
+    assert "cualquier destino" in texto and "Ahora el más barato" in texto and "5. " in texto and "Oporto" in texto

@@ -25,7 +25,7 @@ import traceback
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 
-from . import autoarreglo, enlaces
+from . import aeropuertos, autoarreglo, cualquier, enlaces
 from .avisos import (
     AYUDA, MENSAJE_PRUEBA, NOTA_PAUSA, TIPOS_ALARMA, Telegram, alarma, alarma_en_pausa, codigo_en_mensaje, eur,
     mensaje_accesos, mensaje_accesos_activados, mensaje_aviso, mensaje_bloqueo, mensaje_estado, mensaje_recuperada,
@@ -140,6 +140,37 @@ def avisar_estado_fuente(tg: Telegram | None, chats: list[str], nombre_web: str,
         tg.enviar(chat, texto)
 
 
+def _ryanair_para_cualquiera(fuentes: dict, config: dict, ahora: datetime):
+    """Ryanair para "cualquier destino": la de la ronda o una nueva (son 1 o 2 peticiones cada 2 horas),
+    siempre que no esté desactivada ni frenada."""
+    if "ryanair" in fuentes:
+        return fuentes["ryanair"]
+    cfg = config.get("ryanair") or {}
+    hasta = _fecha_hora(cfg.get("bloqueada_hasta"))
+    if not cfg.get("activa") or (hasta and hasta > ahora):
+        return None
+    from .fuentes.ryanair import Ryanair
+    return Ryanair()
+
+
+def revisar_cualquiera(db: Supabase, b: dict, fuentes: dict, config: dict, estado: dict, cupo_google: int, perfil: dict | None,
+                       aerolineas: dict, tg: Telegram | None, url_web: str | None, hoy: date, ahora: datetime,
+                       problemas: list[str]) -> bool:
+    """Revisa una búsqueda a cualquier destino con lo que quede del cupo de Google. Devuelve True si avisó."""
+    google = fuentes.get("google_flights")
+    usadas = (estado.get("google_flights") or {}).get("peticiones", 0)
+    validas, rechazos, errores, gastadas, bloqueo = cualquier.revisar(
+        b, google, _ryanair_para_cualquiera(fuentes, config, ahora), aerolineas, perfil, cupo_google - usadas if google else 0)
+    if google is not None:
+        est = estado.setdefault("google_flights", {"bloqueo": None, "errores": [], "busquedas": 0, "peticiones": 0})
+        est["peticiones"] += gastadas
+        if bloqueo and not est.get("bloqueo"):
+            est.update(bloqueo=bloqueo, bloqueo_en=b["id"], bloqueo_busqueda=b.get("nombre") or "")
+    usadas_fuentes = ["ryanair"] + (["google_flights"] if gastadas else [])
+    return procesar_busqueda(db, b, validas, rechazos, [], usadas_fuentes, perfil, aerolineas, tg, url_web, hoy, ahora,
+                             errores, problemas=problemas)
+
+
 def _donde(e: Exception) -> str:
     """Tipo de error y dónde pasó (archivo y línea), sin su texto: puede llevar datos de una búsqueda."""
     marco = traceback.extract_tb(e.__traceback__)[-1] if e.__traceback__ else None
@@ -190,6 +221,8 @@ def _caducada(b: dict, hoy: date) -> bool:
 
 def _aplica(fuente: str, b: dict, hoy: date) -> bool:
     info = b.get("info") or {}
+    if cualquier.es_cualquiera(b):
+        return False  # "cualquier destino" se revisa aparte (ver revisar_cualquiera)
     if fuente in ("ryanair", "skyscanner") and es_varios_destinos(b):
         return False  # los viajes con varios destinos solo los busca Google Flights
     if fuente == "skyscanner":
@@ -538,6 +571,8 @@ def procesar_busqueda(
 
     info = dict(b.get("info") or {})
     info.pop("fallos_seguidos", None)  # se ha podido consultar
+    if cualquier.es_cualquiera(b):
+        info["top_destinos"] = cualquier.resumen_top(validas[: cualquier.TOP])
     info["opciones_validas"] = len(validas)
     info["rechazos"] = dict(rechazos.most_common(4))
     info["fuentes"] = fuentes_usadas
@@ -554,7 +589,10 @@ def procesar_busqueda(
     if mejor:
         previo = b.get("mejor_precio")
         cambios["mejor_precio"] = min(float(previo), mejor.precio_total) if previo is not None else mejor.precio_total
-        cambios["estado"] = f"{len(validas)} opciones válidas · la mejor: {eur(mejor.precio_total)}"
+        cambios["estado"] = (
+            f"{len(validas[:cualquier.TOP])} destinos con tus filtros · el más barato: "
+            f"{aeropuertos.nombre(mejor.ida.destino)} {eur(mejor.precio_total)}"
+            if cualquier.es_cualquiera(b) else f"{len(validas)} opciones válidas · la mejor: {eur(mejor.precio_total)}")
     elif rechazos:
         motivo, veces = rechazos.most_common(1)[0]
         cambios["estado"] = f"Ningún vuelo cumple tus filtros (motivo principal: {motivo}, {veces} vuelos)"
@@ -569,6 +607,7 @@ def procesar_busqueda(
             f"{url_web.rstrip('/')}/#/busqueda/{b['id']}" if url_web else None,
             comprar=enlaces.comprar_ya(b, mejor),
             mismo_aeropuerto=next((o for o in validas if not o.vuelta_a_otro_aeropuerto), None),
+            top=validas[: cualquier.TOP] if cualquier.es_cualquiera(b) else None,
         )
         perfil = perfil or {}
         con_alarma = decision.tipo in TIPOS_ALARMA and perfil.get("alarma_chollos") and perfil.get("ntfy_tema")
@@ -675,6 +714,16 @@ def ronda(db: Supabase, tg: Telegram | None, url_web: str | None, forzar: bool, 
             tareas["ryanair"].sort(key=lambda b: (b.get("info") or {}).get("ryanair_ultima", ""))
         validadores = {b["id"]: Validador(b, aerolineas) for b in pendientes}
         resultados, estado = consultar(fuentes, tareas, validadores, config, limite_s)
+        # Cualquier destino: después de las demás y con lo que quede del cupo de Google por hora
+        for b in [x for x in pendientes if cualquier.es_cualquiera(x)]:
+            try:
+                if revisar_cualquiera(db, b, fuentes, config, estado, cupo_google, perfiles.get(b["usuario"]), aerolineas,
+                                      tg, url_web, hoy, ahora, problemas):
+                    resumen["avisos"] += 1
+                resumen["revisadas"] += 1
+            except Exception as e:
+                log.error("Error con una búsqueda a cualquier destino: %s", type(e).__name__)
+                problemas.append(f"Fallo del código con una búsqueda a cualquier destino: {_donde(e)}")
         _registrar_fuentes(estado, resultados)
         resumen["fuentes"] = estado
         for nombre, est in estado.items():
@@ -716,6 +765,8 @@ def ronda(db: Supabase, tg: Telegram | None, url_web: str | None, forzar: bool, 
         culpable = (estado.get("google_flights") or {}).get("bloqueo_en")
         con_google = sin_vuelos = 0  # si Google responde bien pero ninguna búsqueda tiene vuelos, algo raro pasa
         for b in pendientes:
+            if cualquier.es_cualquiera(b):
+                continue  # ya revisada arriba
             por_fuente = resultados.get(b["id"], {})
             if not por_fuente and b["id"] == culpable:
                 # Google dejó de responder con esta: va al final de la cola, para no volver a empezar por ella

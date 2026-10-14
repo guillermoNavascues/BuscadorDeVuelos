@@ -37,6 +37,7 @@ function crearDatos() {
     ...serie("demo-2", ahora - 3 * DIA, 92, 3 * 24, 3).map((p, i) => ({ ...p, revisado: iso(ahora - 3 * DIA + i * 60 * MIN) })),
     ...serie("demo-3", ahora - 2 * DIA, 214, 2 * 72, 11),
     ...serie("demo-4", ahora - 2 * DIA, 260, 2 * 72, 5),
+    ...serie("demo-5", ahora - 2 * DIA, 150, 2 * 12, 9).map((p, i) => ({ ...p, revisado: iso(ahora - 2 * DIA + i * 120 * MIN) })),
   ];
   const ultimo = (id) => historial.filter((h) => h.busqueda === id).at(-1).precio_total;
   const penultimo = (id) => historial.filter((h) => h.busqueda === id).at(-2).precio_total;
@@ -86,6 +87,22 @@ function crearDatos() {
       mejor_precio: minimo("demo-4"), precio_actual: ultimo("demo-4"), estado: "3 opciones válidas", creada: iso(ahora - 2 * DIA),
       info: { variacion: ultimo("demo-4") - penultimo("demo-4"), rechazos: {} },
     },
+    {
+      ...comun, id: "demo-5", nombre: "Escapada a donde sea", modo: "fechas", ida_vuelta: true, origen: "SVQ", destino: "XXX",
+      origenes_extra: ["XRY"], cualquier_destino: true, paises_excluidos: ["RU", "UA", "BY", "IL", "LB", "SY"],
+      fecha_ida: soloFecha(ida1 - 20 * DIA), fecha_vuelta: soloFecha(ida1 - 17 * DIA), adultos: 1, maletas_20kg: 1,
+      modo_precio: "mas_barato", presupuesto: null,
+      proxima_revision: iso(ahora + 94 * MIN), ultima_revision: iso(ahora - 26 * MIN),
+      mejor_precio: minimo("demo-5"), precio_actual: ultimo("demo-5"), creada: iso(ahora - 2 * DIA),
+      estado: `5 destinos con tus filtros · el más barato: Palma de Mallorca (PMI) ${ultimo("demo-5").toFixed(2).replace(".", ",")} €`,
+      info: {
+        variacion: ultimo("demo-5") - penultimo("demo-5"), rechazos: {},
+        top_destinos: [["PMI", "ES", 0], ["RBA", "MA", 1], ["VIT", "ES", 14.5], ["NTE", "FR", 29.1], ["LIS", "PT", 31]].map(([destino, pais, extra]) => ({
+          destino, pais, nombre: destino, precio_total: Math.round((ultimo("demo-5") + extra) * 100) / 100,
+          fecha_ida: soloFecha(ida1 - 20 * DIA), fecha_vuelta: soloFecha(ida1 - 17 * DIA), escalas: 0, aerolineas: ["FR"],
+        })),
+      },
+    },
   ];
 
   const opcion = (id, total, billetes, maletas, ida, vuelta, separados, fuente = "google_flights") => ({
@@ -133,6 +150,20 @@ function crearDatos() {
     { ...lisboa, busqueda: "demo-2", revisado: iso(ahora - 19 * MIN), es_mejor: true, fecha_ida: soloFecha(idaLis), fecha_vuelta: soloFecha(vueltaLis) },
     { ...palma, busqueda: "demo-3", revisado: iso(ahora - 17 * MIN), es_mejor: true, fecha_ida: soloFecha(ida3), fecha_vuelta: soloFecha(ida3 + 5 * DIA) },
   );
+
+  // Cualquier destino: los 5 más baratos desde Sevilla o Jerez
+  const p5 = ultimo("demo-5");
+  const ida5 = ida1 - 20 * DIA;
+  [["PMI", 0, "5512"], ["RBA", 1, "7212"], ["VIT", 14.5, "2061"], ["NTE", 29.1, "4321"], ["LIS", 31, "7114"]].forEach(([destino, extra, numero], i) => {
+    const total = Math.round((p5 + extra) * 100) / 100;
+    const o = opcion(7 + i, total, total, 0, [tramo("FR", numero, "SVQ", destino, ida5, "07:05", "09:10")],
+      [tramo("FR", String(Number(numero) + 1), destino, "SVQ", ida5 + 3 * DIA, "18:20", "20:25")], false, "ryanair");
+    opciones.push({
+      ...o, busqueda: "demo-5", revisado: iso(ahora - 26 * MIN), es_mejor: i === 0, fecha_ida: soloFecha(ida5), fecha_vuelta: soloFecha(ida5 + 3 * DIA),
+      detalle: { ...o.detalle, enlaces: [{ aerolinea: "Ryanair", url: "https://www.ryanair.com" }], google_flights: "https://www.google.com/travel/flights",
+        comprar: [{ texto: "Comprar ya", url: "https://www.ryanair.com" }] },
+    });
+  });
 
   const avisos = [
     { id: 1, busqueda: "demo-1", usuario: "demo", enviado: iso(ahora - 2 * DIA), tipo: "presupuesto", motivo: `Total ${minimo("demo-1")} € para todos, sin pasar de tu máximo de 600 €.`, precio_total: minimo("demo-1"), entregado: true },

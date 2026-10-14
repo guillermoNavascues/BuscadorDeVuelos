@@ -71,6 +71,8 @@ def _linea_trayecto(etiqueta: str, tr: Trayecto, aerolineas: dict[str, dict]) ->
 
 def ruta_txt(b: dict) -> str:
     """"Jerez (XRY) o Sevilla (SVQ) → París Charles de Gaulle (CDG)"; con varios destinos, todo el recorrido."""
+    if b.get("cualquier_destino"):
+        return " o ".join(map(aeropuertos.nombre, aeropuertos_busqueda(b)[0])) + " → cualquier destino"
     recorrido = ruta_viaje(b) if b.get("modo") == "fechas" else []
     if recorrido:
         return " → ".join(map(aeropuertos.nombre, recorrido))
@@ -102,6 +104,7 @@ def mensaje_aviso(
     url_web: str | None,
     comprar: list[dict] | None = None,
     mismo_aeropuerto: Opcion | None = None,
+    top: list[Opcion] | None = None,
 ) -> str:
     ruta = ruta_txt(b)
     lineas = [
@@ -110,6 +113,8 @@ def mensaje_aviso(
         _e(ruta) + (" · varios destinos" if op.siguientes else " · ida y vuelta" if op.vuelta else " · solo ida"),
         "",
     ]
+    if b.get("cualquier_destino"):
+        lineas[-1:-1] = [f"🌍 Ahora el más barato: <b>{_e(aeropuertos.nombre(op.ida.destino))}</b>"]
     if op.siguientes:
         lineas += [_linea_trayecto(f"Vuelo {i}", tr, aerolineas) for i, tr in enumerate([op.ida] + op.siguientes, 1)]
     else:
@@ -144,6 +149,11 @@ def mensaje_aviso(
         lineas.append("⚠️ Ida y vuelta son billetes separados: tienes que comprar los dos.")
     for nota in op.notas:
         lineas.append(f"ℹ️ {_e(nota)}")
+    if top and len(top) > 1:
+        lineas += ["", "🏆 <b>Los destinos más baratos ahora</b> (elige uno en la web y lo vigilo):"]
+        for i, o in enumerate(top, 1):
+            fechas = _fecha(o.ida.fecha) + (f" → {_fecha(o.vuelta.fecha)}" if o.vuelta else "")
+            lineas.append(f"{i}. {_e(aeropuertos.nombre(o.ida.destino))} · <b>{eur(o.precio_total)}</b> · {fechas}")
     if comprar:
         lineas += ["", "🛒 <b>Comprar ya (Google Flights, con estos vuelos elegidos):</b>"]
         for e in comprar:

@@ -3,7 +3,8 @@ import { miniGrafica } from "../graficas.js";
 import { icono } from "../iconos.js";
 import {
   $, aeropuertos, aeropuertosDe, aviso, cadaSegundos, alSalir, tablero, contarHasta, cuentaAtras, deltaHtml, destello, esc, eur, fechaHora,
-  estadoLegible, fechasPrecioHtml, fechasTexto, hace, limpiarPantalla, pasajerosTexto, recorridoHtml, tramosViaje,
+  esCualquiera, estadoLegible, fechasPrecioHtml, fechasTexto, hace, limpiarPantalla, pasajerosTexto, recorridoHtml,
+  rutaCualquieraHtml, topDestinosHtml, tramosViaje,
 } from "../util.js";
 
 const TIPO_AVISO = {
@@ -13,6 +14,7 @@ const TIPO_AVISO = {
 
 function rutaHtml(datos, b) {
   if (tramosViaje(b)) return recorridoHtml(datos, b);
+  if (esCualquiera(b)) return rutaCualquieraHtml(datos, b);
   const a = (c) => datos.mapa.get(c);
   const ciudad = (c) => esc(a(c)?.es || a(c)?.m || c);
   const { origenes, destinos } = aeropuertosDe(b);
@@ -80,6 +82,7 @@ function tarjetaBusqueda(b, datos, mejor) {
         </div>
         <div class="precio-fechas" data-fechas>${fechasDe(b, mejor)}</div>
       </div>
+      <div data-top>${esCualquiera(b) ? topDestinosHtml(datos, b) : ""}</div>
       <div class="mini-grafica"><canvas data-grafica="${b.id}" aria-label="Evolución del precio"></canvas></div>
       <div class="busqueda-pie">
         <span class="pequeno suave" data-estado>${esc(estadoLegible(b.estado) || "Pendiente de la primera revisión")}</span>
@@ -193,6 +196,10 @@ export async function vistaPanel(app) {
     const local = busquedas.find((x) => x.id === b.id);
     if (local) Object.assign(local, b);
     tarjeta.querySelector("[data-fechas]").innerHTML = fechasDe(b, mejores.get(b.id));
+    if (esCualquiera(b)) {
+      tarjeta.querySelector("[data-top]").innerHTML = topDestinosHtml(datos, b);
+      tarjeta.querySelector(".ruta").outerHTML = rutaCualquieraHtml(datos, b);
+    }
     tarjeta.querySelector("[data-estado]").textContent = estadoLegible(b.estado);
     tarjeta.querySelector("[data-revisado]").textContent = textoProxima(b);
   }));

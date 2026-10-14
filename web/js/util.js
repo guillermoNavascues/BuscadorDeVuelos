@@ -277,6 +277,81 @@ export function maletasTexto(b) {
   return m.length ? `Maletas: ${m.join(", ")}` : "Sin maletas extra";
 }
 
+// ---- Cualquier destino ----
+/** Países con riesgo para viajar (guerra o conflicto), que "cualquier destino" evita por defecto. Lista orientativa
+ * según las recomendaciones de viaje del Ministerio de Asuntos Exteriores (las actuales, en exteriores.gob.es);
+ * en cada búsqueda se pueden quitar o añadir países. */
+export const PAISES_RIESGO = ["AF", "BF", "BY", "CF", "HT", "IL", "IQ", "IR", "KP", "LB", "LY", "ML", "MM", "NE", "PS",
+  "RU", "SD", "SO", "SS", "SY", "UA", "VE", "YE"];
+export const esCualquiera = (b) => Boolean(b?.cualquier_destino);
+
+let mapaPaises = null;
+const regiones = (() => {
+  try {
+    return new Intl.DisplayNames(["es"], { type: "region" });
+  } catch {
+    return null;
+  }
+})();
+/** Nombre de un país por su código: en español si el navegador lo sabe; si no, el de la lista de aeropuertos. */
+export function nombrePais(datos, codigo) {
+  if (!mapaPaises) {
+    mapaPaises = new Map();
+    for (const a of datos?.lista || []) if (a.p && a.pn && !mapaPaises.has(a.p)) mapaPaises.set(a.p, a.pn);
+  }
+  let nombre = null;
+  try {
+    nombre = codigo ? regiones?.of(codigo) : null;
+  } catch {}
+  return (nombre && nombre !== codigo ? nombre : mapaPaises.get(codigo)) || codigo;
+}
+/** Países con aeropuertos (y los de riesgo), como [código, nombre], por orden alfabético. */
+export const listaPaises = (datos) => {
+  nombrePais(datos, "");
+  return [...new Set([...mapaPaises.keys(), ...PAISES_RIESGO])]
+    .map((c) => [c, nombrePais(datos, c)])
+    .sort((x, y) => x[1].localeCompare(y[1], "es"));
+};
+
+/** Ruta de "cualquier destino": tus aeropuertos → un globo. */
+export function rutaCualquieraHtml(datos, b, grande = false) {
+  const { origenes } = aeropuertosDe(b);
+  const ciudad = (c) => esc(datos?.mapa?.get(c)?.es || datos?.mapa?.get(c)?.m || c);
+  const mas = origenes.length > 1 ? `<div class="alternativos">o ${origenes.slice(1).map(esc).join(" · ")}</div>` : "";
+  const primero = b.info?.top_destinos?.[0];
+  return `
+    <div class="ruta ${grande ? "grande" : ""}" title="Cualquier destino">
+      <div class="aeropuerto"><div class="codigo">${tablero(origenes[0])}</div><div class="ciudad">${ciudad(origenes[0])}</div>${mas}</div>
+      <div class="trazo">${icono("avion")}</div>
+      <div class="aeropuerto fin"><div class="codigo"><span class="globo-destino" aria-hidden="true">${icono("globo")}</span></div>
+        <div class="ciudad">${primero ? `Ahora: ${ciudad(primero.destino)}` : "Cualquier destino"}</div></div>
+    </div>`;
+}
+
+/** Top de destinos: compacto (tarjeta del panel) o completo, con "Vigilar este destino" (detalle). */
+export function topDestinosHtml(datos, b, completo = false) {
+  const top = b.info?.top_destinos || [];
+  const ciudad = (t) => esc(datos?.mapa?.get(t.destino)?.es || datos?.mapa?.get(t.destino)?.m || t.nombre || t.destino);
+  if (!top.length) {
+    return completo ? `<p class="suave">${b.ultima_revision ? "Ningún destino cumple ahora tus filtros." : "El robot está mirando todos los destinos: en unos minutos verás aquí los 5 más baratos."}</p>` : "";
+  }
+  if (!completo) {
+    return `<ol class="top-mini" aria-label="Destinos más baratos">${top.slice(0, 3).map((t, i) =>
+      `<li><span class="puesto">${i + 1}</span>${ciudad(t)} <b>${eur(t.precio_total, true)}</b></li>`).join("")}</ol>`;
+  }
+  return `<ol class="top-destinos">${top.map((t, i) => {
+    const vuelos = t.escalas ? `${t.escalas} escala${t.escalas > 1 ? "s" : ""}` : "directo";
+    const fechas = `${fecha(t.fecha_ida)}${t.fecha_vuelta ? ` → ${fecha(t.fecha_vuelta)}` : ""}`;
+    return `<li>
+      <span class="puesto">${i + 1}</span>
+      <div><span class="destino-nombre">${ciudad(t)}</span> <span class="tenue pequeno">${esc(nombrePais(datos, t.pais))} · ${esc(t.destino)}</span>
+        <small>${esc(fechas)} · ${esc((t.aerolineas || []).join(", "))} · ${vuelos}</small></div>
+      <div class="top-precio">${eur(t.precio_total)}</div>
+      <button type="button" class="pequeno primario" data-vigilar="${esc(t.destino)}">${icono("ubicacion")}Vigilar este destino</button>
+    </li>`;
+  }).join("")}</ol>`;
+}
+
 /** Vuelos de un viaje con varios destinos (Sevilla → Cracovia → Zúrich → Sevilla), o null si no lo es. */
 export const tramosViaje = (b) => (b?.modo === "fechas" && (b.tramos_viaje || []).length >= 2 ? b.tramos_viaje : null);
 

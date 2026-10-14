@@ -12,6 +12,7 @@ const ERRORES = [
   [/user already registered/i, "Ese correo ya tiene cuenta. Entra con tu contraseña."],
   [/password should be at least/i, "La contraseña debe tener al menos 6 caracteres."],
   [/rate limit/i, "Demasiados intentos seguidos. Espera unos minutos."],
+  [/cualquier_destino|paises_excluidos|busquedas_cualquier_valido/i, "Para «cualquier destino» falta actualizar la base de datos: en Supabase → SQL Editor pega todo supabase/instalar.sql y pulsa Run."],
   [/fechas_extra|tramos_viaje|busquedas_viaje_valido/i, "Para varias fechas o varios destinos falta actualizar la base de datos: en Supabase → SQL Editor pega todo supabase/instalar.sql y pulsa Run."],
   [/origenes_extra|destinos_extra|busquedas_extras_max/i, "Para usar varios aeropuertos falta actualizar la base de datos: en Supabase → SQL Editor pega todo supabase/instalar.sql y pulsa Run."],
   [/ntfy_pausa|zona_horaria/i, "Para el horario solo Telegram falta actualizar la base de datos: en Supabase → SQL Editor pega todo supabase/instalar.sql y pulsa Run."],

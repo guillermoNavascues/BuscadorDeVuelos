@@ -1009,3 +1009,32 @@ td:last-child > .cal-dia.en-ruta { border-radius: 0 6px 6px 0; }
 .fp.varios .fp-noches { flex-basis: 100%; }
 .segmentado label:has(input:disabled) { opacity: .45; cursor: not-allowed; }
 .segmentado label:has(input:focus-visible) { outline: 2px solid var(--primario); outline-offset: 1px; }
+
+/* ---------- Cualquier destino ---------- */
+.globo-destino { display: inline-grid; place-items: center; width: 2.4em; height: 1.3em; border-radius: 4px; background: var(--primario); color: var(--sobre-primario); }
+.globo-destino svg { width: .85em; height: .85em; }
+.top-mini { display: flex; flex-wrap: wrap; gap: .25rem .9rem; margin: .1rem 0 0; padding: 0; list-style: none; font-size: .82rem; color: var(--suave); }
+.top-mini b { color: var(--texto); font-variant-numeric: tabular-nums; }
+.top-mini .puesto { margin-right: .3rem; font: 700 .74rem/1 var(--fuente-datos); color: var(--primario); }
+.top-destinos { display: grid; gap: .5rem; margin: 0; padding: 0; list-style: none; }
+.top-destinos li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: .5rem .9rem; align-items: center;
+  padding: .7rem .85rem; border: 1px solid var(--borde); border-radius: 10px; background: var(--superficie-2); }
+.top-destinos li:first-child { border-color: color-mix(in srgb, var(--primario) 45%, var(--borde)); }
+.top-destinos .puesto { width: 1.7rem; text-align: center; font: 700 1.35rem/1 var(--fuente-display); color: var(--primario); }
+.top-destinos .destino-nombre { font: 700 1.08rem/1.2 var(--fuente-display); }
+.top-destinos small { display: block; margin-top: .15rem; font-size: .78rem; color: var(--suave); }
+.top-destinos .top-precio { font: 700 1.3rem/1 var(--fuente-display); font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (max-width: 560px) {
+  .top-destinos li { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .top-destinos li button { grid-column: 2 / -1; justify-self: start; }
+}
+.destino-cualquiera { display: flex; align-items: center; gap: .65rem; min-height: 46px; padding: .5rem .8rem;
+  border: 1.5px dashed var(--primario); border-radius: 8px; background: var(--primario-suave); }
+.destino-cualquiera svg { width: 20px; height: 20px; flex: none; color: var(--primario); }
+.destino-cualquiera small { display: block; font-size: .78rem; color: var(--suave); }
+button.conmutador-destino { margin-top: .45rem; padding: .3rem .7rem; font-size: .8rem; }
+button.conmutador-destino svg { width: 15px; height: 15px; }
+button.conmutador-destino[aria-pressed="true"] { background: var(--superficie-3); }
+.paises-excluidos { display: flex; flex-wrap: wrap; gap: .35rem; margin: .4rem 0 .6rem; }
+.paises-excluidos button.chip { padding: .25rem .55rem; font-size: .78rem; font-weight: 600; gap: .3rem; }
+.paises-excluidos button.chip svg { width: 12px; height: 12px; }

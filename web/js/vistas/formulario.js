@@ -2,7 +2,7 @@ import { api } from "../api.js";
 import { aFecha, aIso, selectorFechas } from "../calendario.js";
 import { icono } from "../iconos.js";
 import {
-  $, aeropuertos, aeropuertosCercanos, aviso, bandera, buscarAeropuertos, conCarga, esc, eur, fecha, nombreAeropuerto,
+  $, aeropuertos, aeropuertosCercanos, aviso, bandera, buscarAeropuertos, conCarga, esc, PAISES_RIESGO, esCualquiera, listaPaises, nombrePais, eur, fecha, nombreAeropuerto,
 } from "../util.js";
 
 const MAX_EXTRA = 3; // aeropuertos de salida alternativos
@@ -171,6 +171,15 @@ export async function vistaFormulario(app, id, duplicar = false) {
     b = { ...b, ...existente };
     if (duplicar) b.nombre = `${b.nombre} (copia)`;
   }
+  // "Vigilar este destino" (desde una búsqueda a cualquier destino): la misma búsqueda, con ese destino
+  let elegido = null;
+  try {
+    elegido = JSON.parse(sessionStorage.getItem("vigilarDestino") || "null");
+    sessionStorage.removeItem("vigilarDestino");
+  } catch {}
+  if (duplicar && elegido?.desde === id && elegido.destino) {
+    b = { ...b, destino: elegido.destino, cualquier_destino: false, paises_excluidos: [], nombre: "" };
+  }
   const editando = id && !duplicar;
   const tipoInicial = (b.tramos_viaje || []).length >= 2 ? "varios" : b.ida_vuelta ? "ida_vuelta" : "solo_ida";
   const tieneDescuento = (perfil.familia_numerosa || "ninguna") !== "ninguna" || (perfil.residente || "ninguno") !== "ninguno";
@@ -209,7 +218,10 @@ export async function vistaFormulario(app, id, duplicar = false) {
             <div class="aeropuertos">
               <div class="campo"><label>Salida</label><div id="origen"></div></div>
               <button type="button" class="icono intercambiar" id="intercambiar" title="Intercambiar origen y destino">${icono("intercambiar")}</button>
-              <div class="campo"><label>Llegada</label><div id="destino"></div></div>
+              <div class="campo"><label>Llegada</label><div id="destino"></div>
+                <div class="destino-cualquiera oculto" id="destino-cualquiera">${icono("globo")}<span><b>Cualquier destino</b>
+                  <small>Te busco los 5 más baratos</small></span></div>
+                <button type="button" class="chip conmutador-destino" id="conmutar-cualquiera" aria-pressed="false">${icono("globo")}<span data-etiqueta>Cualquier destino</span></button></div>
             </div>
             <div id="salidas-extra"></div>
             <button type="button" class="fantasma pequeno" id="anadir-salida" style="margin-top:.5rem">${icono("mas")}Añadir otro aeropuerto de salida</button>
@@ -218,6 +230,15 @@ export async function vistaFormulario(app, id, duplicar = false) {
             <p class="ayuda">¿Te vale salir de varios sitios (p. ej. Jerez o Sevilla)? Añade hasta ${MAX_EXTRA} aeropuertos de salida más:
               el robot busca desde todos a la vez hacia tu llegada. Solo se aceptan vuelos de los aeropuertos que elijas
               (ojo: París tiene CDG, Orly y Beauvais, a 85 km); las escalas intermedias dan igual.</p>
+            <div id="bloque-cualquier" class="oculto">
+              <label for="anadir-pais" style="margin-top:.6rem">Países que no quieres</label>
+              <div class="paises-excluidos" id="paises-excluidos"></div>
+              <select id="anadir-pais" style="max-width:320px"></select>
+              <p class="ayuda">Por defecto, los países con riesgo para viajar (guerra o conflicto) según las recomendaciones de viaje
+                de Exteriores (las de hoy, en exteriores.gob.es); quita o añade los que quieras. El robot mira todos los destinos de
+                Ryanair desde tus aeropuertos de salida, comprueba los 6 más baratos con Google Flights y tus filtros (escalas,
+                horarios, maletas y descuentos) y te enseña los 5 mejores. Se revisa cada 2 horas.</p>
+            </div>
             </div>
             <div id="bloque-varios" class="oculto">
               <ol class="vuelos-viaje" id="vuelos-viaje"></ol>
@@ -239,7 +260,7 @@ export async function vistaFormulario(app, id, duplicar = false) {
               </div>
               <div class="fechas-extra" id="fechas-extra"></div>
               <button type="button" class="fantasma pequeno" id="anadir-fechas" style="margin-top:.7rem">${icono("mas")}Añadir otras fechas</button>
-              <p class="ayuda">¿Te valen varias fechas para el mismo viaje? Añade hasta ${MAX_FECHAS} más: el robot las vigila todas
+              <p class="ayuda" id="ayuda-extra">¿Te valen varias fechas para el mismo viaje? Añade hasta ${MAX_FECHAS} más: el robot las vigila todas
                 en esta búsqueda y te avisa de la más barata (cada fecha de más alarga un poco cada revisión).</p>
             </div>
             <div id="bloque-chollo">
@@ -329,7 +350,10 @@ export async function vistaFormulario(app, id, duplicar = false) {
   const valorRadio = (nombre) => form.querySelector(`input[name="${nombre}"]:checked`)?.value;
   const num = (idCampo) => Number($(`#${idCampo}`).value ?? $(`#${idCampo}`).textContent);
   let origen = b.origen;
-  let destino = b.destino;
+  // Cualquier destino: el robot elige los más baratos (sin los países que no quieres)
+  let cualquiera = esCualquiera(b);
+  let destino = cualquiera ? "" : b.destino;
+  let paisesExcluidos = cualquiera ? [...(b.paises_excluidos || [])] : [...PAISES_RIESGO];
   // Salidas alternativas: la llegada es siempre la misma. "" = fila recién añadida, todavía sin elegir
   let salidas = [...(b.origenes_extra || [])];
   const salidasValidas = () => [...new Set(salidas.filter((c) => c && c !== origen && c !== destino))];
@@ -386,7 +410,7 @@ export async function vistaFormulario(app, id, duplicar = false) {
       });
     });
     if (enfocar >= 0) caja.querySelector(`[data-extra="${enfocar}"] .billete-parte`)?.focus();
-    $("#anadir-fechas").classList.toggle("oculto", extras.length >= MAX_FECHAS);
+    $("#anadir-fechas").classList.toggle("oculto", cualquiera || extras.length >= MAX_FECHAS);
   };
   const anadirFechas = () => {
     if (extras.length >= MAX_FECHAS) return;
@@ -456,8 +480,16 @@ export async function vistaFormulario(app, id, duplicar = false) {
   const paradas = () => (tramos ? [tramos[0].origen, ...tramos.map((t) => t.destino)] : []);
 
   const pintarLlegadas = () => form.querySelectorAll("[data-llegada]").forEach((el) => {
-    el.innerHTML = destino ? `${icono("avion")}${esc(nombreAeropuerto(datos, destino))}` : '<span class="tenue">Elige la llegada arriba</span>';
+    el.innerHTML = cualquiera ? `${icono("globo")}Cualquier destino`
+      : destino ? `${icono("avion")}${esc(nombreAeropuerto(datos, destino))}` : '<span class="tenue">Elige la llegada arriba</span>';
   });
+  const pintarPaises = () => {
+    $("#paises-excluidos").innerHTML = paisesExcluidos.length
+      ? paisesExcluidos.map((p) => `<button type="button" class="chip" data-quitar-pais="${esc(p)}" aria-label="Quitar ${esc(nombrePais(datos, p))}">${esc(nombrePais(datos, p))}${icono("cruz")}</button>`).join("")
+      : '<span class="tenue pequeno">Ninguno: vale cualquier país.</span>';
+    $("#anadir-pais").innerHTML = '<option value="">Añadir un país…</option>'
+      + listaPaises(datos).filter(([c]) => !paisesExcluidos.includes(c)).map(([c, n]) => `<option value="${esc(c)}">${esc(n)}</option>`).join("");
+  };
   const pintarCercanos = () => {
     const caben = Boolean(origen) && salidas.length < MAX_EXTRA;
     $("#anadir-salida").classList.toggle("oculto", !caben);
@@ -528,6 +560,25 @@ export async function vistaFormulario(app, id, duplicar = false) {
     pintarCercanos();
     actualizar();
   });
+  $("#conmutar-cualquiera").addEventListener("click", () => {
+    cualquiera = !cualquiera;
+    if (cualquiera && extras.length) {
+      extras = []; // con "cualquier destino", unas solas fechas (o un periodo de chollo)
+      pintarExtras();
+    }
+    pintarLlegadas();
+    actualizar();
+  });
+  $("#paises-excluidos").addEventListener("click", (ev) => {
+    const boton = ev.target.closest("[data-quitar-pais]");
+    if (!boton) return;
+    paisesExcluidos = paisesExcluidos.filter((p) => p !== boton.dataset.quitarPais);
+    pintarPaises();
+  });
+  $("#anadir-pais").addEventListener("change", (ev) => {
+    if (ev.target.value && !paisesExcluidos.includes(ev.target.value)) paisesExcluidos.push(ev.target.value);
+    pintarPaises();
+  });
   $("#intercambiar").addEventListener("click", () => {
     [origen, destino] = [destino, origen];
     campoOrigen.poner(origen);
@@ -555,8 +606,8 @@ export async function vistaFormulario(app, id, duplicar = false) {
     const modo = valorRadio("modo");
     // Un viaje con varios destinos va siempre con fechas concretas
     const opcionVarios = $("#opcion-varios input");
-    opcionVarios.disabled = modo === "chollo";
-    if (modo === "chollo" && opcionVarios.checked) form.querySelector('input[name="tipo_viaje"][value="ida_vuelta"]').checked = true;
+    opcionVarios.disabled = modo === "chollo" || cualquiera;
+    if (opcionVarios.disabled && opcionVarios.checked) form.querySelector('input[name="tipo_viaje"][value="ida_vuelta"]').checked = true;
     const varios = esVarios();
     const idaVuelta = esIdaVuelta();
     if (tipoViaje() !== tipoPintado) {
@@ -566,10 +617,20 @@ export async function vistaFormulario(app, id, duplicar = false) {
       principal.ponerRango(idaVuelta);
       pintarExtras();
     }
-    $("#ayuda-tipo").textContent = modo === "chollo"
+    $("#ayuda-tipo").textContent = cualquiera
+      ? "Con «cualquier destino» el viaje es de ida y vuelta o solo ida."
+      : modo === "chollo"
       ? "Varios destinos solo está con fechas concretas."
       : varios ? "Por ejemplo Sevilla → Cracovia → Zúrich → Sevilla: cada vuelo con su fecha." : "";
     $("#bloque-ruta").classList.toggle("oculto", varios);
+    $("#destino").classList.toggle("oculto", cualquiera);
+    $("#destino-cualquiera").classList.toggle("oculto", !cualquiera);
+    $("#bloque-cualquier").classList.toggle("oculto", !cualquiera);
+    $("#intercambiar").style.visibility = cualquiera ? "hidden" : ""; // (oculto, pero sin descolocar las columnas)
+    $("#conmutar-cualquiera").setAttribute("aria-pressed", String(cualquiera));
+    $("#conmutar-cualquiera [data-etiqueta]").textContent = cualquiera ? "Elegir un destino" : "Cualquier destino";
+    $("#anadir-fechas").classList.toggle("oculto", cualquiera || extras.length >= MAX_FECHAS);
+    $("#ayuda-extra").classList.toggle("oculto", cualquiera);
     $("#bloque-varios").classList.toggle("oculto", !varios);
     $("#titulo-ruta").textContent = varios ? "Vuelos del viaje" : "Aeropuertos";
     $("#nota-varios-fechas").classList.toggle("oculto", !varios);
@@ -581,8 +642,11 @@ export async function vistaFormulario(app, id, duplicar = false) {
     $("#bloque-espera").classList.toggle("oculto", valorRadio("escalas_max") === "0");
     $("#valor-espera").textContent = `${$("#escala_max_horas").value} h`;
     const nota = $("#nota-vuelta");
-    nota.classList.toggle("oculto", !(origen && destino));
-    if (origen && destino) {
+    nota.classList.toggle("oculto", !(origen && (destino || cualquiera)));
+    if (origen && cualquiera) {
+      nota.querySelector("span").innerHTML = `Desde <b>${todasSalidas().map(esc).join(" o ")}</b> a los destinos más baratos`
+        + (!idaVuelta ? ", solo ida." : todasSalidas().length > 1 ? "; la vuelta, al mismo aeropuerto del que salgas." : ` y vuelta a <b>${esc(origen)}</b>.`);
+    } else if (origen && destino) {
       const salidasTxt = todasSalidas().map(esc).join(" o ");
       nota.querySelector("span").innerHTML = !idaVuelta
         ? `Solo ida <b>${salidasTxt} → ${esc(destino)}</b>.`
@@ -599,7 +663,9 @@ export async function vistaFormulario(app, id, duplicar = false) {
       : modo === "fechas"
         ? `${fecha($("#fecha_ida").value) || "—"}${idaVuelta ? ` → ${fecha($("#fecha_vuelta").value) || "—"}` : ""}${num("flex_dias") ? ` (±${num("flex_dias")} d)` : ""}${otras ? ` · y ${otras} fecha${otras > 1 ? "s" : ""} más` : ""}`
         : `Del ${fecha($("#chollo_desde").value) || "—"} al ${fecha($("#chollo_hasta").value) || "—"}`;
-    const recorrido = varios
+    const recorrido = cualquiera && !varios
+      ? `<b>${origen ? esc(nombresSalida()) : "Elige salida"}</b><br>cualquier destino (los 5 más baratos)${idaVuelta ? " · ida y vuelta" : " · solo ida"}`
+      : varios
       ? `<b>${esc(paradas().map((c) => (c ? nombreAeropuerto(datos, c, false) : "…")).join(" → "))}</b><br>varios destinos`
       : `<b>${origen ? esc(nombresSalida()) : "Elige salida"}</b><br>${destino ? esc(nombreAeropuerto(datos, destino)) : "Elige llegada"}${idaVuelta ? " · ida y vuelta" : " · solo ida"}`;
     const precio = valorRadio("modo_precio") === "presupuesto"
@@ -615,6 +681,7 @@ export async function vistaFormulario(app, id, duplicar = false) {
   form.addEventListener("input", actualizar);
   form.addEventListener("change", actualizar);
   pintarSalidas();
+  pintarPaises();
   pintarExtras();
   if (tramos) pintarTramos();
   actualizar();
@@ -641,10 +708,11 @@ export async function vistaFormulario(app, id, duplicar = false) {
         d[`${s}_${c}_max`] = usar ? Number(form.querySelector(`[name="${s}_${c}_max"]`).value) : 24;
       }
     }
-    const fechasExtra = !varios && modo === "fechas"
+    const fechasExtra = !varios && !cualquiera && modo === "fechas"
       ? extras.filter((p) => p.ida).map((p) => (idaVuelta ? { ida: p.ida, vuelta: p.vuelta } : { ida: p.ida }))
       : [];
     const vuelosViaje = varios ? tramos.map((t) => ({ origen: t.origen, destino: t.destino, fecha: t.fecha })) : [];
+    if (cualquiera && !varios) d.destino = "XXX"; // "cualquier destino": no es ningún aeropuerto
     if (varios) {
       d.origen = vuelosViaje[0].origen || null;
       d.destino = vuelosViaje[0].destino || null;
@@ -673,8 +741,8 @@ export async function vistaFormulario(app, id, duplicar = false) {
       });
       if (vuelosViaje[0].fecha && vuelosViaje[0].fecha < hoy) errores.push("El primer vuelo ya ha pasado.");
     } else {
-      if (!origen || !destino) errores.push("Elige los dos aeropuertos de la lista.");
-      if (origen && origen === destino) errores.push("El aeropuerto de salida y el de llegada no pueden ser el mismo.");
+      if (!origen || (!destino && !cualquiera)) errores.push(cualquiera ? "Elige tu aeropuerto de salida de la lista." : "Elige los dos aeropuertos de la lista.");
+      if (!cualquiera && origen && origen === destino) errores.push("El aeropuerto de salida y el de llegada no pueden ser el mismo.");
     }
     fechasExtra.forEach((p, i) => {
       if (p.ida < hoy) errores.push(`Las fechas ${i + 2} ya han pasado.`);
@@ -706,8 +774,13 @@ export async function vistaFormulario(app, id, duplicar = false) {
     if ("destinos_extra" in b) d.destinos_extra = []; // la llegada es siempre una
     if (fechasExtra.length || "fechas_extra" in b) d.fechas_extra = fechasExtra;
     if (varios || "tramos_viaje" in b) d.tramos_viaje = vuelosViaje;
+    if (cualquiera || "cualquier_destino" in b) {
+      d.cualquier_destino = cualquiera && !varios;
+      d.paises_excluidos = d.cualquier_destino ? paisesExcluidos : [];
+    }
     d.nombre = $("#nombre").value.trim() || (varios
       ? paradas().map((c) => nombreAeropuerto(datos, c, false)).join(" → ")
+      : cualquiera ? `${nombreAeropuerto(datos, origen, false)} → cualquier destino`
       : `${nombreAeropuerto(datos, origen, false)} → ${nombreAeropuerto(datos, destino, false)}`);
     try {
       const guardada = await conCarga(ev.submitter, editando ? api.actualizarBusqueda(id, d) : api.crearBusqueda(d));

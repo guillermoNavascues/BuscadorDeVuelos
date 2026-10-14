@@ -253,14 +253,14 @@ begin
         new.ida_salida_min, new.ida_salida_max, new.ida_llegada_min, new.ida_llegada_max,
         new.vuelta_salida_min, new.vuelta_salida_max, new.vuelta_llegada_min, new.vuelta_llegada_max,
         new.adultos, new.ninos, new.bebes, new.maletas_cabina, new.maletas_20kg, new.aplicar_descuentos,
-        new.escalas_max, new.escala_max_horas, new.fechas_extra, new.tramos_viaje)
+        new.escalas_max, new.escala_max_horas, new.fechas_extra, new.tramos_viaje, new.cualquier_destino, new.paises_excluidos)
        is distinct from
        (old.modo, old.ida_vuelta, old.origen, old.destino, old.origenes_extra, old.destinos_extra, old.fecha_ida, old.fecha_vuelta, old.flex_dias,
         old.chollo_desde, old.chollo_hasta, old.noches_min, old.noches_max,
         old.ida_salida_min, old.ida_salida_max, old.ida_llegada_min, old.ida_llegada_max,
         old.vuelta_salida_min, old.vuelta_salida_max, old.vuelta_llegada_min, old.vuelta_llegada_max,
         old.adultos, old.ninos, old.bebes, old.maletas_cabina, old.maletas_20kg, old.aplicar_descuentos,
-        old.escalas_max, old.escala_max_horas, old.fechas_extra, old.tramos_viaje) then
+        old.escalas_max, old.escala_max_horas, old.fechas_extra, old.tramos_viaje, old.cualquier_destino, old.paises_excluidos) then
       new.historial_desde := now();
       new.mejor_precio := null;
       new.precio_actual := null;
@@ -563,6 +563,25 @@ begin
       -- un viaje con varios destinos va con fechas concretas, sin vuelta aparte ni fechas alternativas
       and (tramos_viaje = '[]'::jsonb or (modo = 'fechas' and not ida_vuelta and fechas_extra = '[]'::jsonb))
       and (fechas_extra = '[]'::jsonb or modo = 'fechas')) not valid;
+  end if;
+end;
+$$;
+
+-- =====================================================================
+-- Actualización v10: cualquier destino (top 5 de destinos más baratos desde tus aeropuertos)
+-- =====================================================================
+-- El destino se guarda como 'XXX' (no es ningún aeropuerto) y el robot elige los más baratos;
+-- paises_excluidos: códigos de país (ES, MA...) que no quieres, por defecto los de riesgo para viajar.
+alter table public.busquedas add column if not exists cualquier_destino boolean not null default false;
+alter table public.busquedas add column if not exists paises_excluidos text[] not null default '{}';
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'busquedas_cualquier_valido') then
+    alter table public.busquedas add constraint busquedas_cualquier_valido check (
+      cardinality(paises_excluidos) <= 100
+      and array_to_string(paises_excluidos, ',') ~ '^([A-Z]{2}(,|$))*$'
+      and (not cualquier_destino or (destino = 'XXX' and tramos_viaje = '[]'::jsonb and fechas_extra = '[]'::jsonb))
+      and (cualquier_destino or destino <> 'XXX')) not valid;
   end if;
 end;
 $$;

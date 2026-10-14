@@ -466,3 +466,78 @@ def test_sin_vuelos_con_tus_filtros_no_es_un_fallo(monkeypatch):
     # Otra cosa (aviso de cookies, página sin datos...): eso sí es un fallo
     res = preparar("página de consentimiento de cookies (HTTP 200)").buscar(b, Validador(b, AEROLINEAS))
     assert res.error and "cookies" in res.error
+
+
+# ---------------- cualquier destino ----------------
+
+def _ida_vuelta(aero, o, d, precio, dia=13, fuente="ryanair"):
+    return Opcion(fuente, Trayecto([tramo(aero, o, d, datetime(2026, 11, dia, 8))]),
+                  Trayecto([tramo(aero, d, o, datetime(2026, 11, dia + 3, 18))]), precio)
+
+
+class RyanairFalsa:
+    def __init__(self, tarifas):
+        self.tarifas, self.pedidas = tarifas, []
+
+    def cualquier_destino(self, b, origen):
+        self.pedidas.append(origen)
+        return [op for op in self.tarifas if op.ida.origen == origen]
+
+
+def busqueda_cualquiera(**cambios):
+    return busqueda(destino="XXX", cualquier_destino=True, origen="SVQ", origenes_extra=["XRY"],
+                    paises_excluidos=["RU", "UA"], maletas_20kg=0, **cambios)
+
+
+def test_cualquier_destino_candidatos_sin_paises_excluidos():
+    from buscador import cualquier
+
+    b = busqueda_cualquiera()
+    ryanair = RyanairFalsa([
+        _ida_vuelta("FR", "SVQ", "PMI", 60), _ida_vuelta("FR", "XRY", "PMI", 45),  # el mismo destino desde Jerez, más barato
+        _ida_vuelta("FR", "SVQ", "RAK", 40), _ida_vuelta("FR", "SVQ", "SVO", 10),  # Moscú: país excluido
+        _ida_vuelta("FR", "SVQ", "XRY", 5),  # uno de tus aeropuertos de salida: no es un destino
+    ])
+    lista = cualquier.candidatos(b, ryanair)
+    assert ryanair.pedidas == ["SVQ", "XRY"]  # una petición por aeropuerto de salida
+    assert [(o.ida.origen, o.ida.destino, o.precio_billetes) for o in lista] == [("SVQ", "RAK", 40), ("XRY", "PMI", 45)]
+
+
+def test_cualquier_destino_top_con_tus_filtros_y_google():
+    from buscador import cualquier
+    from buscador.modelos import ResultadoFuente
+
+    b = busqueda_cualquiera()
+    ryanair = RyanairFalsa([_ida_vuelta("FR", "SVQ", d, p) for d, p in
+                            (("PMI", 30), ("RAK", 31), ("BGY", 45), ("BVA", 50), ("OPO", 55), ("MAD", 60), ("LIS", 70))])
+
+    class GoogleFalso:
+        def __init__(self):
+            self.destinos = []
+
+        def buscar(self, b2, validador):
+            self.destinos.append(b2["destino"])
+            assert b2["cualquier_destino"] is False and b2["modo"] == "fechas" and b2["fecha_ida"] == "2026-11-13"
+            # Google encuentra Lisboa más barato con Iberia... pero Lisboa no está entre los 6 candidatos
+            opciones = [_ida_vuelta("IB", "SVQ", "BGY", 20, fuente="google_flights")] if b2["destino"] == "BGY" else []
+            return ResultadoFuente(opciones=opciones, peticiones=5)
+
+    google = GoogleFalso()
+    top, rechazos, errores, gastadas, bloqueo = cualquier.revisar(b, google, ryanair, AEROLINEAS, None, cupo_google=90)
+    assert google.destinos == ["PMI", "RAK", "BGY", "BVA", "OPO", "MAD"]  # los 6 más baratos de Ryanair
+    assert gastadas == 30 and bloqueo is None and not errores
+    assert [o.ida.destino for o in top] == ["BGY", "PMI", "RAK", "BVA", "OPO"]  # Bérgamo, más barato con Google
+    assert top[0].fuente == "google_flights" and len(top) == cualquier.TOP
+    resumen = cualquier.resumen_top(top)
+    assert resumen[0]["destino"] == "BGY" and resumen[0]["pais"] == "IT" and resumen[0]["fecha_ida"] == "2026-11-13"
+
+    # Sin cupo de Google: solo con Ryanair (y sin gastar consultas)
+    google.destinos.clear()
+    top, _, _, gastadas, _ = cualquier.revisar(b, google, ryanair, AEROLINEAS, None, cupo_google=5)
+    assert google.destinos == [] and gastadas == 0 and [o.ida.destino for o in top][:2] == ["PMI", "RAK"]
+
+
+def test_cualquier_destino_se_revisa_cada_2_horas():
+    from buscador.decision import minutos_hasta_siguiente_revision
+
+    assert minutos_hasta_siguiente_revision(busqueda_cualquiera(), date(2026, 10, 14)) == 120

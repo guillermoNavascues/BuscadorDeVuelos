@@ -3,7 +3,7 @@ import { graficaPrecios } from "../graficas.js";
 import { icono } from "../iconos.js";
 import {
   $, aeropuertos, aeropuertosDe, alSalir, animarTableros, tablero, aviso, cadaSegundos, confirmar, contarHasta, cuentaAtras, deltaHtml, destello, esc, eur,
-  esHttps, estadoLegible, fecha, recorridoHtml, tramosViaje, fechaHora, fechasPrecioHtml, fechasTexto, hace, horaLocal, limpiarPantalla, maletasTexto, pasajerosTexto,
+  esCualquiera, esHttps, estadoLegible, fecha, recorridoHtml, rutaCualquieraHtml, topDestinosHtml, tramosViaje, fechaHora, fechasPrecioHtml, fechasTexto, hace, horaLocal, limpiarPantalla, maletasTexto, pasajerosTexto,
 } from "../util.js";
 
 const NOMBRE_FUENTE = { google_flights: "Google Flights", ryanair: "Ryanair", skyscanner: "Skyscanner" };
@@ -228,7 +228,7 @@ export async function vistaDetalle(app, id) {
             <button id="borrar" class="peligro icono" title="Borrar">${icono("papelera")}</button>
           </div>
         </div>
-        ${tramosViaje(b) ? `<div class="ruta" style="display:block;margin:1.4rem 0 1.2rem">${recorridoHtml(datos, b, true)}</div>` : `
+        ${esCualquiera(b) ? `<div style="margin:1.4rem 0 1.2rem">${rutaCualquieraHtml(datos, b, true)}</div>` : tramosViaje(b) ? `<div class="ruta" style="display:block;margin:1.4rem 0 1.2rem">${recorridoHtml(datos, b, true)}</div>` : `
         <div class="ruta grande" style="margin:1.4rem 0 1.2rem">
           <div class="aeropuerto"><div class="codigo">${tablero(b.origen)}</div><div class="ciudad">${ciudad(b.origen)}</div>${alternativos(origenes)}</div>
           <div class="trazo">${icono("avion")}</div>
@@ -244,6 +244,13 @@ export async function vistaDetalle(app, id) {
           ${b.activa ? "" : `<span class="chip mal">${icono("pausa")}En pausa</span>`}
         </div>
       </section>
+      ${esCualquiera(b) ? `
+      <section class="tarjeta" style="margin-top:1.1rem">
+        <div class="tarjeta-titulo"><h2>${icono("globo")}Los destinos más baratos</h2>
+          <span class="pequeno tenue">con tus filtros · se revisa cada 2 horas</span></div>
+        <div id="top-destinos">${topDestinosHtml(datos, b, true)}</div>
+        <p class="ayuda">Pulsa «Vigilar este destino» y se crea una búsqueda normal a ese destino con tus mismos filtros y fechas.</p>
+      </section>` : ""}
 
       <section class="tarjeta" style="margin-top:1.1rem">
         <div class="tarjeta-titulo">
@@ -412,10 +419,22 @@ export async function vistaDetalle(app, id) {
     pintarHistorial(true);
     mostrarPrecio(Number(p.precio_total));
   }, `busqueda=eq.${id}`));
+  // Cualquier destino: "Vigilar este destino" abre el formulario con ese destino y tus mismos filtros
+  const vigilar = (ev) => {
+    const boton = ev.target.closest("[data-vigilar]");
+    if (!boton) return;
+    try {
+      sessionStorage.setItem("vigilarDestino", JSON.stringify({ desde: id, destino: boton.dataset.vigilar }));
+    } catch {}
+    location.hash = `#/duplicar/${id}`;
+  };
+  app.addEventListener("click", vigilar);
+  alSalir(() => app.removeEventListener("click", vigilar));
   alSalir(api.suscribir("busquedas", async ({ new: nueva }) => {
     if (!nueva || nueva.id !== id) return;
     tiempoRealActivo = true;
     b = { ...b, ...nueva };
+    if (esCualquiera(b) && $("#top-destinos")) $("#top-destinos").innerHTML = topDestinosHtml(datos, b, true);
     $("#revisado").textContent = textoRevisado();
     $("#estado").textContent = estadoLegible(nueva.estado);
     $("#estado").closest(".nota").classList.toggle("oculto", !nueva.estado);

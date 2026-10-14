@@ -258,7 +258,13 @@ REVISION_CERCA_MIN = 20
 REVISION_LEJOS_MIN = 40
 
 
+REVISION_CUALQUIER_DESTINO_MIN = 120  # Ryanair actualiza sus tarifas a todos los destinos cada pocas horas
+
+
 def minutos_hasta_siguiente_revision(busqueda: dict, hoy: date) -> int:
-    """Cada 20 min hasta 2 meses vista; cada 40 si falta más (en un chollo cuenta el inicio del periodo)."""
+    """Cada 20 min hasta 2 meses vista; cada 40 si falta más (en un chollo cuenta el inicio del periodo).
+    "Cualquier destino", cada 2 horas."""
+    if busqueda.get("cualquier_destino"):
+        return REVISION_CUALQUIER_DESTINO_MIN
     dias = (primera_salida(busqueda, hoy) - hoy).days
     return REVISION_CERCA_MIN if dias <= DIAS_VIAJE_CERCANO else REVISION_LEJOS_MIN
