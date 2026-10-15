@@ -44,7 +44,7 @@ def main() -> None:
     )
     # Resultado visible al final: si salen 8 tablas y 77 aerolíneas, todo ha ido bien
     comprobacion = (
-        "\n-- Comprobación final (debe salir: 8 tablas, 77 aerolíneas, 3 webs, versión 2 = 1, versión 3 = 2, versión 5 = 3, versión 6 = 5, versión 7 = 6, versión 8 = 1, versión 9 = 2, versión 10 = 2;\n"
+        "\n-- Comprobación final (debe salir: 8 tablas, 77 aerolíneas, 3 webs, versión 2 = 1, versión 3 = 2, versión 5 = 3, versión 6 = 5, versión 7 = 6, versión 8 = 1, versión 9 = 2, versión 10 = 2, versión 11 = 1;\n"
         "-- accesos registrados por Supabase: más de 0 si has usado la web este mes)\n"
         "select 'Tablas creadas' as comprobacion, count(*) as total from information_schema.tables\n"
         "  where table_schema = 'public' and table_name in\n"
@@ -71,6 +71,8 @@ def main() -> None:
         "  where table_schema = 'public' and table_name = 'busquedas' and column_name in ('fechas_extra', 'tramos_viaje')\n"
         "union all select 'Versión 10 instalada (cualquier destino)', count(*) from information_schema.columns\n"
         "  where table_schema = 'public' and table_name = 'busquedas' and column_name in ('cualquier_destino', 'paises_excluidos')\n"
+        "union all select 'Versión 11 instalada (cualquier destino con varias fechas)', count(*) from pg_constraint\n"
+        "  where conname = 'busquedas_cualquier_valido' and pg_get_constraintdef(oid) not like '%fechas_extra%'\n"
         "union all select 'Accesos registrados por Supabase (últimos 30 días)', count(*) from auth.audit_log_entries\n"
         "  where created_at > now() - interval '30 days';\n"
     )

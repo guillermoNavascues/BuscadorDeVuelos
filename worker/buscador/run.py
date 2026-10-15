@@ -141,8 +141,8 @@ def avisar_estado_fuente(tg: Telegram | None, chats: list[str], nombre_web: str,
 
 
 def _ryanair_para_cualquiera(fuentes: dict, config: dict, ahora: datetime):
-    """Ryanair para "cualquier destino": la de la ronda o una nueva (son 1 o 2 peticiones cada 2 horas),
-    siempre que no esté desactivada ni frenada."""
+    """Ryanair para "cualquier destino": la de la ronda o una nueva (una petición por aeropuerto de salida
+    y fecha, 12 como mucho, cada 2 horas), siempre que no esté desactivada ni frenada."""
     if "ryanair" in fuentes:
         return fuentes["ryanair"]
     cfg = config.get("ryanair") or {}

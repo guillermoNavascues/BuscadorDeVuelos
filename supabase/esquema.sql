@@ -574,13 +574,18 @@ $$;
 -- paises_excluidos: códigos de país (ES, MA...) que no quieres, por defecto los de riesgo para viajar.
 alter table public.busquedas add column if not exists cualquier_destino boolean not null default false;
 alter table public.busquedas add column if not exists paises_excluidos text[] not null default '{}';
+-- Actualización v11: cualquier destino también con fechas alternativas (la v10 no las dejaba)
 do $$
 begin
+  if exists (select 1 from pg_constraint where conname = 'busquedas_cualquier_valido'
+             and pg_get_constraintdef(oid) like '%fechas_extra%') then
+    alter table public.busquedas drop constraint busquedas_cualquier_valido;
+  end if;
   if not exists (select 1 from pg_constraint where conname = 'busquedas_cualquier_valido') then
     alter table public.busquedas add constraint busquedas_cualquier_valido check (
       cardinality(paises_excluidos) <= 100
       and array_to_string(paises_excluidos, ',') ~ '^([A-Z]{2}(,|$))*$'
-      and (not cualquier_destino or (destino = 'XXX' and tramos_viaje = '[]'::jsonb and fechas_extra = '[]'::jsonb))
+      and (not cualquier_destino or (destino = 'XXX' and tramos_viaje = '[]'::jsonb))
       and (cualquier_destino or destino <> 'XXX')) not valid;
   end if;
 end;

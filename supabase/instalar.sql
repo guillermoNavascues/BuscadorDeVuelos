@@ -574,13 +574,18 @@ $$;
 -- paises_excluidos: códigos de país (ES, MA...) que no quieres, por defecto los de riesgo para viajar.
 alter table public.busquedas add column if not exists cualquier_destino boolean not null default false;
 alter table public.busquedas add column if not exists paises_excluidos text[] not null default '{}';
+-- Actualización v11: cualquier destino también con fechas alternativas (la v10 no las dejaba)
 do $$
 begin
+  if exists (select 1 from pg_constraint where conname = 'busquedas_cualquier_valido'
+             and pg_get_constraintdef(oid) like '%fechas_extra%') then
+    alter table public.busquedas drop constraint busquedas_cualquier_valido;
+  end if;
   if not exists (select 1 from pg_constraint where conname = 'busquedas_cualquier_valido') then
     alter table public.busquedas add constraint busquedas_cualquier_valido check (
       cardinality(paises_excluidos) <= 100
       and array_to_string(paises_excluidos, ',') ~ '^([A-Z]{2}(,|$))*$'
-      and (not cualquier_destino or (destino = 'XXX' and tramos_viaje = '[]'::jsonb and fechas_extra = '[]'::jsonb))
+      and (not cualquier_destino or (destino = 'XXX' and tramos_viaje = '[]'::jsonb))
       and (cualquier_destino or destino <> 'XXX')) not valid;
   end if;
 end;
@@ -672,7 +677,7 @@ insert into public.aerolineas (codigo, nombre, permitida, criterio, web_oficial,
   ('H2', 'SKY Airline', true, 'AirlineRatings 2026: top 25 low cost (nº25)', 'https://www.skyairline.com', 50, 80, 80, 80, 'tramo', null, 'La tarifa básica solo incluye un bolso pequeño; maletas = máximo publicado (estimación).')
 on conflict (codigo) do nothing;
 
--- Comprobación final (debe salir: 8 tablas, 77 aerolíneas, 3 webs, versión 2 = 1, versión 3 = 2, versión 5 = 3, versión 6 = 5, versión 7 = 6, versión 8 = 1, versión 9 = 2, versión 10 = 2;
+-- Comprobación final (debe salir: 8 tablas, 77 aerolíneas, 3 webs, versión 2 = 1, versión 3 = 2, versión 5 = 3, versión 6 = 5, versión 7 = 6, versión 8 = 1, versión 9 = 2, versión 10 = 2, versión 11 = 1;
 -- accesos registrados por Supabase: más de 0 si has usado la web este mes)
 select 'Tablas creadas' as comprobacion, count(*) as total from information_schema.tables
   where table_schema = 'public' and table_name in
@@ -699,5 +704,7 @@ union all select 'Versión 9 instalada (varias fechas y varios destinos)', count
   where table_schema = 'public' and table_name = 'busquedas' and column_name in ('fechas_extra', 'tramos_viaje')
 union all select 'Versión 10 instalada (cualquier destino)', count(*) from information_schema.columns
   where table_schema = 'public' and table_name = 'busquedas' and column_name in ('cualquier_destino', 'paises_excluidos')
+union all select 'Versión 11 instalada (cualquier destino con varias fechas)', count(*) from pg_constraint
+  where conname = 'busquedas_cualquier_valido' and pg_get_constraintdef(oid) not like '%fechas_extra%'
 union all select 'Accesos registrados por Supabase (últimos 30 días)', count(*) from auth.audit_log_entries
   where created_at > now() - interval '30 days';

@@ -1,7 +1,7 @@
 """Cualquier destino: los destinos más baratos desde tus aeropuertos, con tus mismos filtros.
 
-1. Ryanair da en una sola petición la tarifa más barata a cada uno de sus destinos (desde cada aeropuerto
-   de salida, con tus fechas o tu periodo de chollo).
+1. Ryanair da en una sola petición la tarifa más barata a cada uno de sus destinos (una por aeropuerto
+   de salida y fecha: las principales, las alternativas o tu periodo de chollo).
 2. Se quitan los países que no quieres (por defecto, los de riesgo para viajar: ver la web).
 3. Los más baratos se comprueban con Google Flights (todas las aerolíneas) y con tus filtros de siempre:
    escalas, horarios, maletas, lista blanca y descuentos.
@@ -11,9 +11,11 @@
 from __future__ import annotations
 
 import logging
+import random
+import time
 from collections import Counter
 
-from . import aeropuertos
+from . import aeropuertos, viaje
 from .filtros import Validador, aeropuertos_busqueda
 from .modelos import FuenteBloqueada, Opcion, ResultadoFuente
 from .nucleo import evaluar
@@ -24,6 +26,8 @@ CUALQUIERA = "XXX"  # código de "destino" que se guarda en la búsqueda (no es 
 CANDIDATOS = 6  # cuántos de los más baratos de Ryanair se comprueban con Google
 TOP = 5
 CONSULTAS_POR_CANDIDATO = 6  # lo que suele gastar en Google comprobar un destino (para no pasar del cupo)
+MAX_RYANAIR = 12  # peticiones a Ryanair por revisión como mucho (aeropuertos de salida × fechas)
+PAUSA_RYANAIR_S = (6.0, 12.0)  # entre una petición a Ryanair y la siguiente, sin prisas
 
 
 def es_cualquiera(b: dict) -> bool:
@@ -39,13 +43,26 @@ def para_destino(b: dict, op: Opcion) -> dict:
     }
 
 
+def por_fechas(b: dict) -> list[dict]:
+    """La búsqueda con cada una de sus fechas (las principales y las alternativas); con chollo, el periodo entero."""
+    pares = viaje.pares_fechas(b)
+    if not pares:
+        return [b]
+    return [{**b, "fecha_ida": fi.isoformat(), "fecha_vuelta": fv.isoformat() if fv else None, "fechas_extra": []}
+            for fi, fv in pares]
+
+
 def candidatos(b: dict, ryanair) -> list[Opcion]:
-    """La tarifa más barata de Ryanair a cada destino (sin los países excluidos), de más barata a más cara."""
+    """La tarifa más barata de Ryanair a cada destino (sin los países excluidos), de más barata a más cara;
+    con varias fechas, la de la fecha más barata para cada destino."""
     excluidos = set(b.get("paises_excluidos") or [])
     origenes, _ = aeropuertos_busqueda(b)
     mejores: dict[str, Opcion] = {}
-    for origen in origenes:
-        for op in ryanair.cualquier_destino(b, origen):
+    peticiones = [(bf, origen) for bf in por_fechas(b) for origen in origenes][:MAX_RYANAIR]
+    for i, (bf, origen) in enumerate(peticiones):
+        if i:
+            time.sleep(random.uniform(*PAUSA_RYANAIR_S))
+        for op in ryanair.cualquier_destino(bf, origen):
             destino = op.ida.destino
             if destino in origenes or aeropuertos.pais(destino) in excluidos:
                 continue

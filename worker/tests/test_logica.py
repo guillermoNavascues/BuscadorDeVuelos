@@ -485,8 +485,8 @@ class RyanairFalsa:
 
 
 def busqueda_cualquiera(**cambios):
-    return busqueda(destino="XXX", cualquier_destino=True, origen="SVQ", origenes_extra=["XRY"],
-                    paises_excluidos=["RU", "UA"], maletas_20kg=0, **cambios)
+    return busqueda(**{"destino": "XXX", "cualquier_destino": True, "origen": "SVQ", "origenes_extra": ["XRY"],
+                       "paises_excluidos": ["RU", "UA"], "maletas_20kg": 0, **cambios})
 
 
 def test_cualquier_destino_candidatos_sin_paises_excluidos():
@@ -501,6 +501,48 @@ def test_cualquier_destino_candidatos_sin_paises_excluidos():
     lista = cualquier.candidatos(b, ryanair)
     assert ryanair.pedidas == ["SVQ", "XRY"]  # una petición por aeropuerto de salida
     assert [(o.ida.origen, o.ida.destino, o.precio_billetes) for o in lista] == [("SVQ", "RAK", 40), ("XRY", "PMI", 45)]
+
+
+def test_cualquier_destino_con_varias_fechas():
+    from buscador import cualquier
+    from buscador.modelos import ResultadoFuente
+
+    class RyanairPorFechas(RyanairFalsa):
+        def cualquier_destino(self, b, origen):
+            self.pedidas.append((origen, b["fecha_ida"], b["fecha_vuelta"]))
+            dia = int(b["fecha_ida"][-2:])
+            return [op for op in self.tarifas if op.ida.origen == origen and op.ida.salida.day == dia]
+
+    b = busqueda_cualquiera(fecha_ida="2026-11-13", fecha_vuelta="2026-11-16",
+                            fechas_extra=[{"ida": "2026-11-20", "vuelta": "2026-11-23"}])
+    ryanair = RyanairPorFechas([
+        _ida_vuelta("FR", "SVQ", "PMI", 60, dia=13), _ida_vuelta("FR", "SVQ", "PMI", 35, dia=20),  # Palma, mejor el 20
+        _ida_vuelta("FR", "XRY", "RAK", 40, dia=13), _ida_vuelta("FR", "XRY", "RAK", 90, dia=20),  # Marrakech, el 13
+    ])
+    lista = cualquier.candidatos(b, ryanair)
+    # Una petición por aeropuerto de salida y fecha
+    assert ryanair.pedidas == [("SVQ", "2026-11-13", "2026-11-16"), ("XRY", "2026-11-13", "2026-11-16"),
+                               ("SVQ", "2026-11-20", "2026-11-23"), ("XRY", "2026-11-20", "2026-11-23")]
+    assert [(o.ida.destino, o.ida.salida.day, o.precio_billetes) for o in lista] == [("PMI", 20, 35), ("RAK", 13, 40)]
+
+    # Google comprueba cada destino en la fecha de su tarifa más barata
+    class GoogleFalso:
+        fechas = []
+
+        def buscar(self, b2, validador):
+            self.fechas.append((b2["destino"], b2["fecha_ida"], b2["fechas_extra"]))
+            return ResultadoFuente(opciones=[], peticiones=5)
+
+    google = GoogleFalso()
+    top, _, _, _, _ = cualquier.revisar(b, google, ryanair, AEROLINEAS, None, cupo_google=90)
+    assert google.fechas == [("PMI", "2026-11-20", []), ("RAK", "2026-11-13", [])]
+    assert [(t["destino"], t["fecha_ida"]) for t in cualquier.resumen_top(top)] == [("PMI", "2026-11-20"), ("RAK", "2026-11-13")]
+
+    # Con muchas salidas y fechas, como mucho 12 peticiones a Ryanair
+    ryanair.pedidas.clear()
+    extra = [{"ida": f"2026-11-{d}", "vuelta": f"2026-11-{d + 2}"} for d in (14, 15, 16, 17, 18)]
+    cualquier.candidatos(busqueda_cualquiera(origenes_extra=["XRY", "AGP", "ODB"], fechas_extra=extra), ryanair)
+    assert len(ryanair.pedidas) == cualquier.MAX_RYANAIR
 
 
 def test_cualquier_destino_top_con_tus_filtros_y_google():

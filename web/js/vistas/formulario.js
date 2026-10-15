@@ -237,7 +237,8 @@ export async function vistaFormulario(app, id, duplicar = false) {
               <p class="ayuda">Por defecto, los países con riesgo para viajar (guerra o conflicto) según las recomendaciones de viaje
                 de Exteriores (las de hoy, en exteriores.gob.es); quita o añade los que quieras. El robot mira todos los destinos de
                 Ryanair desde tus aeropuertos de salida, comprueba los 6 más baratos con Google Flights y tus filtros (escalas,
-                horarios, maletas y descuentos) y te enseña los 5 mejores. Se revisa cada 2 horas.</p>
+                horarios, maletas y descuentos) y te enseña los 5 mejores. Si añades otras fechas, las mira todas y de cada
+                destino te enseña la fecha más barata. Se revisa cada 2 horas.</p>
             </div>
             </div>
             <div id="bloque-varios" class="oculto">
@@ -410,7 +411,7 @@ export async function vistaFormulario(app, id, duplicar = false) {
       });
     });
     if (enfocar >= 0) caja.querySelector(`[data-extra="${enfocar}"] .billete-parte`)?.focus();
-    $("#anadir-fechas").classList.toggle("oculto", cualquiera || extras.length >= MAX_FECHAS);
+    $("#anadir-fechas").classList.toggle("oculto", extras.length >= MAX_FECHAS);
   };
   const anadirFechas = () => {
     if (extras.length >= MAX_FECHAS) return;
@@ -562,10 +563,6 @@ export async function vistaFormulario(app, id, duplicar = false) {
   });
   $("#conmutar-cualquiera").addEventListener("click", () => {
     cualquiera = !cualquiera;
-    if (cualquiera && extras.length) {
-      extras = []; // con "cualquier destino", unas solas fechas (o un periodo de chollo)
-      pintarExtras();
-    }
     pintarLlegadas();
     actualizar();
   });
@@ -629,8 +626,6 @@ export async function vistaFormulario(app, id, duplicar = false) {
     $("#intercambiar").style.visibility = cualquiera ? "hidden" : ""; // (oculto, pero sin descolocar las columnas)
     $("#conmutar-cualquiera").setAttribute("aria-pressed", String(cualquiera));
     $("#conmutar-cualquiera [data-etiqueta]").textContent = cualquiera ? "Elegir un destino" : "Cualquier destino";
-    $("#anadir-fechas").classList.toggle("oculto", cualquiera || extras.length >= MAX_FECHAS);
-    $("#ayuda-extra").classList.toggle("oculto", cualquiera);
     $("#bloque-varios").classList.toggle("oculto", !varios);
     $("#titulo-ruta").textContent = varios ? "Vuelos del viaje" : "Aeropuertos";
     $("#nota-varios-fechas").classList.toggle("oculto", !varios);
@@ -708,7 +703,7 @@ export async function vistaFormulario(app, id, duplicar = false) {
         d[`${s}_${c}_max`] = usar ? Number(form.querySelector(`[name="${s}_${c}_max"]`).value) : 24;
       }
     }
-    const fechasExtra = !varios && !cualquiera && modo === "fechas"
+    const fechasExtra = !varios && modo === "fechas"
       ? extras.filter((p) => p.ida).map((p) => (idaVuelta ? { ida: p.ida, vuelta: p.vuelta } : { ida: p.ida }))
       : [];
     const vuelosViaje = varios ? tramos.map((t) => ({ origen: t.origen, destino: t.destino, fecha: t.fecha })) : [];
