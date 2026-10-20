@@ -25,6 +25,8 @@ import traceback
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 
+import httpx
+
 from . import aeropuertos, autoarreglo, cualquier, enlaces
 from .avisos import (
     AYUDA, MENSAJE_PRUEBA, NOTA_PAUSA, TIPOS_ALARMA, Telegram, alarma, alarma_en_pausa, codigo_en_mensaje, eur,
@@ -723,6 +725,8 @@ def ronda(db: Supabase, tg: Telegram | None, url_web: str | None, forzar: bool, 
                 resumen["revisadas"] += 1
             except Exception as e:
                 log.error("Error con una búsqueda a cualquier destino: %s", type(e).__name__)
+                if isinstance(e, httpx.TransportError):
+                    continue  # corte de red puntual: se reintenta en la siguiente vuelta, no es un fallo del código
                 problemas.append(f"Fallo del código con una búsqueda a cualquier destino: {_donde(e)}")
         _registrar_fuentes(estado, resultados)
         resumen["fuentes"] = estado
@@ -815,6 +819,8 @@ def ronda(db: Supabase, tg: Telegram | None, url_web: str | None, forzar: bool, 
             except Exception as e:
                 log.error("Error procesando la búsqueda %s…: %s", b["id"][:8], type(e).__name__)
                 resumen["errores"].append(f"{b.get('nombre')}: {type(e).__name__}: {e}"[:300])
+                if isinstance(e, httpx.TransportError):
+                    continue  # corte de red puntual (p. ej. al guardar en Supabase): se reintenta en la siguiente vuelta
                 problemas.append(f"Fallo del código al procesar una búsqueda ({autoarreglo.forma_busqueda(b)}): {_donde(e)}")
         if con_google >= 3 and sin_vuelos == con_google:
             problemas.append(f"Google responde con su página de resultados, pero ninguna de las {con_google} búsquedas de "

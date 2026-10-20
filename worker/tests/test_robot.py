@@ -688,3 +688,34 @@ def test_cualquier_destino_guarda_el_top_y_avisa_con_la_lista():
     assert len(db.leer("precios")) == 5  # un destino por fila: la web enseña el top con sus vuelos
     texto = tg.enviados[0][1]
     assert "cualquier destino" in texto and "Ahora el más barato" in texto and "5. " in texto and "Oporto" in texto
+
+
+def test_corte_de_red_al_procesar_una_busqueda_no_pide_autoarreglo(monkeypatch):
+    """Visto en el aviso #7: un ReadTimeout al guardar en Supabase no es un fallo del código."""
+    from collections import Counter
+
+    import httpx
+
+    fuente = dict(activa=True, bloqueos_seguidos=0, ultima_ronda=None, max_peticiones=60,
+                  pausa_min_s=6, pausa_max_s=16, intervalo_min=2, bloqueada_hasta=None)
+    db = BaseDeDatosFalsa({
+        "busquedas": [dict(id="b1", usuario="u1", nombre="París", activa=True, modo="fechas",
+                           ida_vuelta=True, fecha_ida="2027-01-10", fecha_vuelta="2027-01-12", info={})],
+        "estado_fuentes": [dict(fuente, fuente="ryanair", nombre="Ryanair")],
+        "aerolineas": [], "perfiles": [], "ejecuciones": [],
+    })
+    pedidos = []
+
+    def cortar(*a, **k):
+        raise httpx.ReadTimeout("t")
+
+    resultado = type("R", (), dict(peticiones=1, opciones=[], error=None, calendario=[]))()
+    monkeypatch.setattr(run, "crear_fuentes", lambda nombres, config, aerolineas: dict.fromkeys(nombres))
+    monkeypatch.setattr(run, "consultar", lambda fuentes, tareas, validadores, config, limite_s: (
+        dict(b1=dict(ryanair=resultado)),
+        dict.fromkeys(fuentes, dict(bloqueo=None, errores=[], busquedas=1, peticiones=1))))
+    monkeypatch.setattr(run, "evaluar", lambda *a, **k: ([], Counter(), []))
+    monkeypatch.setattr(run, "procesar_busqueda", cortar)
+    monkeypatch.setattr(run.autoarreglo, "pedir_arreglo", lambda *a, **k: pedidos.append(a[3]))
+    run.ronda(db, None, None, forzar=True, limite_s=60)
+    assert pedidos == []
