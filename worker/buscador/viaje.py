@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 MAX_FECHAS_EXTRA = 5  # fechas alternativas de un mismo viaje (además de las principales)
 MAX_TRAMOS = 5  # vuelos de un viaje con varios destinos
@@ -59,6 +59,45 @@ def primera_salida(b: dict, hoy: date) -> date:
     fechas = sorted(salidas(b))
     futuras = [f for f in fechas if f >= hoy]
     return futuras[0] if futuras else fechas[-1]
+
+
+def _par(fi: date, fv: date | None) -> dict:
+    return {"ida": fi.isoformat(), **({"vuelta": fv.isoformat()} if fv else {})}
+
+
+def caducidad(b: dict, hoy: date) -> tuple[bool, dict]:
+    """Lo que ya ha pasado de una búsqueda: (borrarla, cambios para quitar lo pasado).
+
+    Unas fechas caducan el día en que empieza el viaje (con margen de días, el último en que se podría
+    salir): se quitan y, si no queda ninguna, se borra la búsqueda. Un viaje con varios destinos, cuando
+    sale el primer vuelo. Un chollo, cuando ya no cabe ninguna salida (con la estancia mínima), y mientras
+    tanto el periodo empieza siempre mañana.
+    """
+    if es_varios_destinos(b):
+        return tramos_viaje(b)[0][2] <= hoy, {}
+    if b.get("modo") == "fechas":
+        pares = pares_fechas(b)
+        if not pares:
+            return False, {}  # fechas sin completar: no se toca
+        margen = timedelta(days=b.get("flex_dias") or 0)
+        vivos = [(fi, fv) for fi, fv in pares if fi + margen > hoy]
+        if not vivos:
+            return True, {}
+        if len(vivos) == len(pares):
+            return False, {}
+        principal = pares[0] if pares[0] in vivos else min(vivos)
+        return False, {
+            "fecha_ida": principal[0].isoformat(),
+            "fecha_vuelta": principal[1].isoformat() if principal[1] else None,
+            "fechas_extra": [_par(fi, fv) for fi, fv in vivos if (fi, fv) != principal],
+        }
+    desde, hasta = _fecha(b.get("chollo_desde")), _fecha(b.get("chollo_hasta"))
+    if not desde or not hasta:
+        return False, {}
+    estancia = (b.get("noches_min") or 0) if b.get("ida_vuelta") else 0
+    if hasta - timedelta(days=estancia) <= hoy:
+        return True, {}
+    return False, ({"chollo_desde": (hoy + timedelta(days=1)).isoformat()} if desde <= hoy else {})
 
 
 def ruta_viaje(b: dict) -> list[str]:

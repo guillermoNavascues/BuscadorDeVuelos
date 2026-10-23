@@ -348,7 +348,8 @@ body.sin-sesion .contenido { max-width: none; padding: 0; }
 .boton.fantasma:hover, button.fantasma:hover { background: var(--superficie-3); color: var(--texto); border-color: transparent; }
 .boton.peligro, button.peligro { color: var(--mal); }
 .boton.peligro:hover, button.peligro:hover { border-color: var(--mal); background: var(--mal-suave); }
-.boton.exito { color: var(--ok); }
+.boton.exito, button.exito { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, var(--borde-fuerte)); background: var(--ok-suave); }
+.boton.exito:hover, button.exito:hover { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 18%, transparent); }
 .boton.pequeno, button.pequeno { padding: .42rem .72rem; font-size: .82rem; border-radius: 10px; }
 .boton.grande, button.grande { padding: .85rem 1.4rem; font-size: 1rem; border-radius: 14px; }
 .boton.icono, button.icono { padding: .55rem; width: 40px; height: 40px; border-radius: 12px; }

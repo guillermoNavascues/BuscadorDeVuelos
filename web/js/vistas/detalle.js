@@ -1,4 +1,5 @@
 import { api } from "../api.js";
+import { botonComprado, yaHeComprado } from "../comprado.js";
 import { graficaPrecios } from "../graficas.js";
 import { icono } from "../iconos.js";
 import {
@@ -223,6 +224,7 @@ export async function vistaDetalle(app, id) {
             <h1 style="margin:0">${esc(b.nombre)}</h1>
           </div>
           <div class="acciones">
+            ${botonComprado(b)}
             <a class="boton" href="#/editar/${b.id}">${icono("editar")}Editar</a>
             <button id="pausar">${icono(b.activa ? "pausa" : "play")}${b.activa ? "Pausar" : "Reanudar"}</button>
             <button id="borrar" class="peligro icono" title="Borrar">${icono("papelera")}</button>
@@ -430,7 +432,15 @@ export async function vistaDetalle(app, id) {
   };
   app.addEventListener("click", vigilar);
   alSalir(() => app.removeEventListener("click", vigilar));
-  alSalir(api.suscribir("busquedas", async ({ new: nueva }) => {
+  alSalir(api.suscribir("busquedas", async ({ eventType, old, new: nueva }) => {
+    // El robot la ha borrado (ha llegado el día del viaje) o se ha borrado desde Telegram
+    if (eventType === "DELETE") {
+      if (old?.id === id && location.hash.includes(id)) {
+        aviso("Esta búsqueda se ha borrado");
+        location.hash = "#/";
+      }
+      return;
+    }
     if (!nueva || nueva.id !== id) return;
     tiempoRealActivo = true;
     b = { ...b, ...nueva };
@@ -460,6 +470,9 @@ export async function vistaDetalle(app, id) {
     await api.actualizarBusqueda(b.id, { activa: !b.activa });
     aviso(b.activa ? "Búsqueda en pausa" : "Búsqueda reanudada: el robot la revisa en un minuto");
     recargar();
+  });
+  $("[data-comprado]").addEventListener("click", async () => {
+    if (await yaHeComprado(b)) location.hash = "#/";
   });
   $("#borrar").addEventListener("click", async () => {
     const ok = await confirmar({

@@ -385,16 +385,46 @@ def test_google_sin_pagina_de_resultados():
 # ---------------- varias fechas y varios destinos ----------------
 
 def test_varias_fechas_en_una_busqueda():
-    from buscador import run, viaje
+    from buscador import viaje
 
     b = busqueda(fechas_extra=[{"ida": "2026-11-20", "vuelta": "2026-11-23"}, {"ida": "2026-11-15", "vuelta": "2026-11-19"},
                                {"ida": "2026-11-27", "vuelta": "2026-11-25"}])
     # Sin repetir la principal ni aceptar una vuelta anterior a la ida
     assert viaje.pares_fechas(b) == [(date(2026, 11, 15), date(2026, 11, 19)), (date(2026, 11, 20), date(2026, 11, 23))]
     assert viaje.primera_salida(b, date(2026, 11, 16)) == date(2026, 11, 20)
-    assert run._caducada(b, date(2026, 11, 18)) is False and run._caducada(b, date(2026, 11, 21)) is True
     solo = busqueda(ida_vuelta=False, fecha_vuelta=None, fechas_extra=[{"ida": "2026-11-18"}])
     assert viaje.pares_fechas(solo) == [(date(2026, 11, 15), None), (date(2026, 11, 18), None)]
+
+
+def test_lo_que_ya_ha_llegado_se_quita_y_la_busqueda_se_borra():
+    from buscador.viaje import caducidad
+
+    d = lambda dia: date(2026, 11, dia)  # noqa: E731
+    b = busqueda(fechas_extra=[{"ida": "2026-11-20", "vuelta": "2026-11-23"}])  # 15-19 y 20-23
+    assert caducidad(b, d(14)) == (False, {})
+    # El día en que empieza el viaje, esas fechas se quitan: las siguientes pasan a ser las principales
+    assert caducidad(b, d(15)) == (False, {"fecha_ida": "2026-11-20", "fecha_vuelta": "2026-11-23", "fechas_extra": []})
+    assert caducidad(b, d(20)) == (True, {})  # no queda ninguna: se borra
+    # La principal sigue y una alternativa ya pasó (solo ida)
+    solo = busqueda(ida_vuelta=False, fecha_vuelta=None, fecha_ida="2026-11-20",
+                    fechas_extra=[{"ida": "2026-11-12"}, {"ida": "2026-11-25"}])
+    assert caducidad(solo, d(13)) == (False, {"fecha_ida": "2026-11-20", "fecha_vuelta": None,
+                                              "fechas_extra": [{"ida": "2026-11-25"}]})
+    # Con ±1 día de margen se podría salir el 16: hasta entonces no caduca
+    assert caducidad(busqueda(flex_dias=1), d(15)) == (False, {})
+    assert caducidad(busqueda(flex_dias=1), d(16)) == (True, {})
+    # Chollo: el periodo empieza siempre mañana y se borra cuando ya no cabe la estancia mínima
+    chollo = busqueda(modo="chollo", fecha_ida=None, fecha_vuelta=None, chollo_desde="2026-11-01",
+                      chollo_hasta="2026-11-30", noches_min=3, noches_max=5)
+    assert caducidad(chollo, d(10)) == (False, {"chollo_desde": "2026-11-11"})
+    assert caducidad({**chollo, "chollo_desde": "2026-11-11"}, d(10)) == (False, {})
+    assert caducidad(chollo, d(26)) == (False, {"chollo_desde": "2026-11-27"})
+    assert caducidad(chollo, d(27)) == (True, {})  # salir el 28 con 3 noches ya no cabe antes del 30
+    # Varios destinos: cuando sale el primer vuelo
+    varios = busqueda(ida_vuelta=False, fecha_vuelta=None, fecha_ida="2026-11-13", tramos_viaje=[
+        {"origen": "SVQ", "destino": "KRK", "fecha": "2026-11-13"}, {"origen": "KRK", "destino": "SVQ", "fecha": "2026-11-16"}])
+    assert caducidad(varios, d(12)) == (False, {}) and caducidad(varios, d(13)) == (True, {})
+    assert caducidad(busqueda(fecha_ida=None), d(20)) == (False, {})  # incompleta: no se toca
 
 
 def test_viaje_con_varios_destinos(monkeypatch):

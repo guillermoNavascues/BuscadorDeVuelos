@@ -57,18 +57,32 @@ class BaseDeDatosFalsa:
 
     def borrar(self, tabla, filtros):
         self.borrados.append((tabla, filtros))
+        if all(str(v).startswith("eq.") for v in filtros.values()):  # (los demás filtros solo se apuntan)
+            self.tablas[tabla] = [f for f in self.tablas.get(tabla, []) if not self._cumple(f, filtros)]
 
 
 class TelegramFalso:
     def __init__(self, mensajes):
         self.mensajes = mensajes
         self.enviados = []
+        self.botones = []  # (chat, botones) de cada mensaje enviado
+        self.respuestas = []  # respuestas a pulsaciones de botones
+        self.cambios = []  # (chat, mensaje, botones nuevos)
 
     def mensajes_nuevos(self, desde, espera=0):
         return [m for m in self.mensajes if desde is None or m["update_id"] > desde]
 
-    def enviar(self, chat, texto):
+    def enviar(self, chat, texto, botones=None):
         self.enviados.append((str(chat), texto))
+        self.botones.append((str(chat), botones))
+        return True
+
+    def responder_boton(self, id_pulsacion, texto=None):
+        self.respuestas.append((id_pulsacion, texto))
+        return True
+
+    def cambiar_botones(self, chat, id_mensaje, botones):
+        self.cambios.append((str(chat), id_mensaje, botones))
         return True
 
 
@@ -104,6 +118,68 @@ def test_vincular_con_codigo_y_responder_comandos():
     tg.enviados.clear()
     run.atender_telegram(db, tg, {p["id"]: p for p in db.leer("perfiles")}, None)
     assert tg.enviados == []
+
+
+ID_B = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+
+
+def _pulsacion(update_id, chat, datos, mensaje=7):
+    return {"update_id": update_id, "callback_query": {
+        "id": f"p{update_id}", "data": datos, "message": {"message_id": mensaje, "chat": {"id": chat}}}}
+
+
+def test_boton_ya_he_comprado_pide_confirmacion_y_borra():
+    db = BaseDeDatosFalsa({
+        "perfiles": [{"id": "u1", "telegram_chat_id": "99"}, {"id": "u2", "telegram_chat_id": "55"}],
+        "busquedas": [{"id": ID_B, "usuario": "u1", "nombre": "Puente en París"}],
+        "ajustes": [],
+    })
+    tg = TelegramFalso([
+        _pulsacion(1, 55, f"borrar:{ID_B}"),  # otra persona no puede borrar tu búsqueda
+        _pulsacion(2, 99, "borrar:../../perfiles"),  # algo raro: se ignora
+        _pulsacion(3, 99, f"comprado:{ID_B}"),  # pide confirmación
+        _pulsacion(4, 99, f"cancelar:{ID_B}"),  # vuelve a dejar el botón
+    ])
+    run.atender_telegram(db, tg, {p["id"]: p for p in db.leer("perfiles")}, None)
+    assert db.leer("busquedas") and tg.enviados == []
+    assert [r[0] for r in tg.respuestas] == ["p1", "p2", "p3", "p4"]  # siempre se contesta a la pulsación
+    (_, _, confirmar), (_, _, otra_vez) = tg.cambios[-2:]
+    assert [b["callback_data"] for b in confirmar[0]] == [f"borrar:{ID_B}", f"cancelar:{ID_B}"]
+    assert otra_vez[0][0]["callback_data"] == f"comprado:{ID_B}"
+
+    tg.mensajes.append(_pulsacion(5, 99, f"borrar:{ID_B}"))
+    run.atender_telegram(db, tg, {p["id"]: p for p in db.leer("perfiles")}, None)
+    assert db.leer("busquedas") == []
+    assert tg.cambios[-1] == ("99", 7, None)  # el mensaje se queda sin botones
+    assert tg.enviados == [("99", "🗑️ Se ha borrado la búsqueda «Puente en París».")]
+
+    # Pulsar otra vez un botón viejo: ya no existe
+    tg.mensajes.append(_pulsacion(6, 99, f"comprado:{ID_B}"))
+    run.atender_telegram(db, tg, {p["id"]: p for p in db.leer("perfiles")}, None)
+    assert tg.respuestas[-1] == ("p6", "Esa búsqueda ya no existe")
+
+
+def test_al_llegar_el_dia_del_viaje_la_busqueda_se_borra_y_las_fechas_pasadas_se_quitan():
+    from datetime import date
+
+    db = BaseDeDatosFalsa({
+        "perfiles": [{"id": "u1", "telegram_chat_id": "99"}],
+        "busquedas": [
+            {"id": "b1", "usuario": "u1", "nombre": "Ya empieza", "modo": "fechas", "ida_vuelta": True,
+             "fecha_ida": "2026-11-15", "fecha_vuelta": "2026-11-19", "activa": True},
+            {"id": "b2", "usuario": "u1", "nombre": "En pausa y pasada", "modo": "fechas", "ida_vuelta": False,
+             "fecha_ida": "2026-11-01", "activa": False},
+            {"id": "b3", "usuario": "u1", "nombre": "Sigue", "modo": "fechas", "ida_vuelta": True,
+             "fecha_ida": "2026-11-10", "fecha_vuelta": "2026-11-12", "activa": True,
+             "fechas_extra": [{"ida": "2026-12-01", "vuelta": "2026-12-04"}]},
+        ],
+    })
+    tg = TelegramFalso([])
+    siguen = run.quitar_lo_pasado(db, tg, db.leer("busquedas"), date(2026, 11, 15))
+    assert [b["id"] for b in siguen] == ["b3"] and [b["id"] for b in db.leer("busquedas")] == ["b3"]
+    assert db.leer("busquedas")[0]["fecha_ida"] == "2026-12-01" and db.leer("busquedas")[0]["fechas_extra"] == []
+    assert sorted(t for _, t in tg.enviados) == ["🗑️ Se ha borrado la búsqueda «En pausa y pasada».",
+                                                 "🗑️ Se ha borrado la búsqueda «Ya empieza»."]
 
 
 def test_hilo_de_atencion_contesta_y_da_senal_de_vida():
@@ -686,6 +762,8 @@ def test_cualquier_destino_guarda_el_top_y_avisa_con_la_lista():
     assert [t["destino"] for t in guardada["info"]["top_destinos"]] == ["PMI", "RAK", "BGY", "BVA", "OPO"]
     assert guardada["estado"].startswith("5 destinos con tus filtros · el más barato: ") and "PMI" in guardada["estado"]
     assert len(db.leer("precios")) == 5  # un destino por fila: la web enseña el top con sus vuelos
+    # Debajo del aviso, el botón para borrar la búsqueda cuando ya tengas los billetes
+    assert tg.botones[0][1][0][0]["callback_data"] == f"comprado:{guardada['id']}"
     texto = tg.enviados[0][1]
     assert "cualquier destino" in texto and "Ahora el más barato" in texto and "5. " in texto and "Oporto" in texto
 

@@ -306,6 +306,24 @@ MENSAJE_PRUEBA = (
 )
 
 
+def mensaje_borrada(nombre: str | None) -> str:
+    """Cuando una búsqueda se borra (ha llegado el día del viaje o ya tienes los billetes)."""
+    return f"🗑️ Se ha borrado la búsqueda «{_e(nombre or 'sin nombre')}»."
+
+
+# Botón bajo cada aviso de precio: «ya he comprado» → confirmar → se borra la búsqueda
+BOTON_COMPRADO = "✅ Ya he comprado los vuelos"
+
+
+def botones_comprado(id_busqueda: str) -> list[list[dict]]:
+    return [[{"text": BOTON_COMPRADO, "callback_data": f"comprado:{id_busqueda}"}]]
+
+
+def botones_confirmar_borrado(id_busqueda: str) -> list[list[dict]]:
+    return [[{"text": "🗑️ Sí, borrar la búsqueda", "callback_data": f"borrar:{id_busqueda}"},
+             {"text": "No", "callback_data": f"cancelar:{id_busqueda}"}]]
+
+
 def mensaje_estado(busquedas: list[dict], url_web: str | None) -> str:
     """Resumen de las búsquedas activas para el comando /estado."""
     activas = [b for b in busquedas if b.get("activa")]
@@ -331,17 +349,29 @@ class Telegram:
         self.url = f"https://api.telegram.org/bot{token}"
         self.http = httpx.Client(timeout=20)
 
-    def enviar(self, chat_id: str, texto: str) -> bool:
+    def enviar(self, chat_id: str, texto: str, botones: list[list[dict]] | None = None) -> bool:
+        datos = {"chat_id": chat_id, "text": texto, "parse_mode": "HTML", "disable_web_page_preview": True}
+        if botones:
+            datos["reply_markup"] = {"inline_keyboard": botones}
+        return self._llamar("sendMessage", datos)
+
+    def responder_boton(self, id_pulsacion: str, texto: str | None = None) -> bool:
+        """Contesta a la pulsación de un botón (si no, Telegram lo deja «cargando»)."""
+        return self._llamar("answerCallbackQuery", {"callback_query_id": id_pulsacion, **({"text": texto} if texto else {})})
+
+    def cambiar_botones(self, chat_id: str, id_mensaje: int, botones: list[list[dict]] | None) -> bool:
+        """Cambia (o quita, con None) los botones de un mensaje ya enviado."""
+        return self._llamar("editMessageReplyMarkup", {"chat_id": chat_id, "message_id": id_mensaje,
+                                                       "reply_markup": {"inline_keyboard": botones or []}})
+
+    def _llamar(self, metodo: str, datos: dict) -> bool:
         try:
-            r = self.http.post(
-                f"{self.url}/sendMessage",
-                json={"chat_id": chat_id, "text": texto, "parse_mode": "HTML", "disable_web_page_preview": True},
-            )
+            r = self.http.post(f"{self.url}/{metodo}", json=datos)
             if r.status_code != 200:
-                log.warning("Telegram respondió %s: %s", r.status_code, r.text[:200])
+                log.warning("Telegram (%s) respondió %s: %s", metodo, r.status_code, r.text[:200])
             return r.status_code == 200
         except httpx.HTTPError as e:
-            log.warning("No se pudo enviar el aviso por Telegram: %s", type(e).__name__)
+            log.warning("No se pudo hablar con Telegram (%s): %s", metodo, type(e).__name__)
             return False
 
     def token_valido(self) -> bool:
@@ -358,7 +388,7 @@ class Telegram:
     def mensajes_nuevos(self, desde_update: int | None, espera: int = 0) -> list[dict]:
         """Mensajes nuevos. Con `espera`, Telegram mantiene la petición abierta hasta esos segundos y
         contesta en cuanto llega un mensaje (así el bot responde al momento)."""
-        params = {"timeout": espera, "allowed_updates": '["message"]'}
+        params = {"timeout": espera, "allowed_updates": '["message", "callback_query"]'}
         if desde_update is not None:
             params["offset"] = desde_update + 1
         try:

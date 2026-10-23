@@ -29,9 +29,9 @@ import httpx
 
 from . import aeropuertos, autoarreglo, cualquier, enlaces
 from .avisos import (
-    AYUDA, MENSAJE_PRUEBA, NOTA_PAUSA, TIPOS_ALARMA, Telegram, alarma, alarma_en_pausa, codigo_en_mensaje, eur,
-    mensaje_accesos, mensaje_accesos_activados, mensaje_aviso, mensaje_bloqueo, mensaje_estado, mensaje_recuperada,
-    texto_alarma,
+    AYUDA, MENSAJE_PRUEBA, NOTA_PAUSA, TIPOS_ALARMA, Telegram, alarma, alarma_en_pausa, botones_comprado,
+    botones_confirmar_borrado, codigo_en_mensaje, eur, mensaje_accesos, mensaje_accesos_activados, mensaje_aviso,
+    mensaje_bloqueo, mensaje_borrada, mensaje_estado, mensaje_recuperada, texto_alarma,
 )
 from .db import Supabase
 from .decision import decidir, minutos_hasta_siguiente_revision
@@ -40,7 +40,7 @@ from .modelos import Opcion
 from .nucleo import consultar, crear_fuentes, evaluar
 from .tiempo import ZONA
 from .tiempo import hoy as hoy_espana
-from .viaje import es_varios_destinos, salidas
+from .viaje import caducidad, es_varios_destinos
 
 log = logging.getLogger("buscador")
 
@@ -215,10 +215,36 @@ def _fecha_hora(valor: str | None) -> datetime | None:
     return datetime.fromisoformat(valor.replace("Z", "+00:00")) if valor else None
 
 
-def _caducada(b: dict, hoy: date) -> bool:
-    if b["modo"] == "fechas":
-        return all(f < hoy for f in salidas(b))  # con varias fechas, cuando ya han pasado todas
-    return date.fromisoformat(str(b["chollo_hasta"])) < hoy
+def borrar_busqueda(db: Supabase, tg: Telegram | None, b: dict) -> None:
+    """Borra una búsqueda (con su historial y sus avisos) y se lo dice por Telegram."""
+    db.borrar("busquedas", {"id": f"eq.{b['id']}"})
+    perfil = (db.leer("perfiles", id=f"eq.{b['usuario']}", select="telegram_chat_id") or [{}])[0]
+    if tg and perfil.get("telegram_chat_id"):
+        tg.enviar(perfil["telegram_chat_id"], mensaje_borrada(b.get("nombre")))
+
+
+def _ya_no_existe(db: Supabase, b: dict) -> bool:
+    try:
+        return not db.leer("busquedas", id=f"eq.{b['id']}", select="id")
+    except Exception:  # sin poder comprobarlo, se trata como un fallo normal
+        return False
+
+
+def quitar_lo_pasado(db: Supabase, tg: Telegram | None, busquedas: list[dict], hoy: date) -> list[dict]:
+    """Borra las búsquedas cuyo viaje ya empieza y quita las fechas que ya han llegado (no se buscan vuelos
+    de días pasados). Devuelve las que siguen."""
+    siguen = []
+    for b in busquedas:
+        borrar, cambios = caducidad(b, hoy)
+        if borrar:
+            borrar_busqueda(db, tg, b)
+            log.info("Búsqueda %s… borrada: ha llegado el día del viaje", b["id"][:8])
+            continue
+        if cambios:
+            db.actualizar("busquedas", {"id": f"eq.{b['id']}"}, cambios)
+            b = {**b, **cambios}
+        siguen.append(b)
+    return siguen
 
 
 def _aplica(fuente: str, b: dict, hoy: date) -> bool:
@@ -297,6 +323,38 @@ LIMITE_RESPUESTAS_DESCONOCIDOS = Limitador(30, 3600)
 LIMITE_VINCULADO = Limitador(30, 60)
 
 
+ID_BUSQUEDA = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def atender_boton(db: Supabase, tg: Telegram, pulsacion: dict, por_chat: dict[str, dict]) -> None:
+    """Botón «Ya he comprado los vuelos» de un aviso: pide confirmación y, si confirmas, borra la búsqueda."""
+    mensaje = pulsacion.get("message") or {}
+    chat = str((mensaje.get("chat") or {}).get("id") or "")
+    accion, _, id_b = str(pulsacion.get("data") or "").partition(":")
+    perfil = por_chat.get(chat)
+    if (not perfil or accion not in ("comprado", "borrar", "cancelar") or not ID_BUSQUEDA.fullmatch(id_b)
+            or not LIMITE_VINCULADO.permitir(chat)):
+        tg.responder_boton(pulsacion.get("id"))
+        return
+    id_mensaje = mensaje.get("message_id")
+    encontradas = db.leer("busquedas", id=f"eq.{id_b}", usuario=f"eq.{perfil['id']}", select="id,nombre")
+    if not encontradas:
+        tg.cambiar_botones(chat, id_mensaje, None)
+        tg.responder_boton(pulsacion.get("id"), "Esa búsqueda ya no existe")
+    elif accion == "comprado":
+        tg.cambiar_botones(chat, id_mensaje, botones_confirmar_borrado(id_b))
+        tg.responder_boton(pulsacion.get("id"), "¿Seguro? Se borrará la búsqueda con su historial")
+    elif accion == "cancelar":
+        tg.cambiar_botones(chat, id_mensaje, botones_comprado(id_b))
+        tg.responder_boton(pulsacion.get("id"))
+    else:
+        db.borrar("busquedas", {"id": f"eq.{id_b}", "usuario": f"eq.{perfil['id']}"})
+        tg.cambiar_botones(chat, id_mensaje, None)
+        tg.responder_boton(pulsacion.get("id"), "¡Buen viaje! Búsqueda borrada")
+        tg.enviar(chat, mensaje_borrada(encontradas[0]["nombre"]))
+        log.info("Búsqueda %s… borrada desde Telegram (ya tiene los billetes)", id_b[:8])
+
+
 def atender_telegram(db: Supabase, tg: Telegram, perfiles: dict[str, dict], url_web: str | None, espera: int = 0) -> int:
     """Vincula chats con el código de la web, responde a /estado y /ayuda y envía mensajes de prueba."""
     offset = _ajuste(db, "telegram_offset")
@@ -305,6 +363,9 @@ def atender_telegram(db: Supabase, tg: Telegram, perfiles: dict[str, dict], url_
     ultimo, vinculados, ignorados = offset, 0, 0
     for m in tg.mensajes_nuevos(offset, espera):
         ultimo = m["update_id"]
+        if m.get("callback_query"):
+            atender_boton(db, tg, m["callback_query"], por_chat)
+            continue
         mensaje = m.get("message") or {}
         chat = (mensaje.get("chat") or {}).get("id")
         texto = (mensaje.get("text") or "").strip()
@@ -618,7 +679,7 @@ def procesar_busqueda(
             con_alarma = False
             texto += "\n\n" + NOTA_PAUSA
         chat = perfil.get("telegram_chat_id")
-        entregado = bool(tg and chat and tg.enviar(chat, texto))
+        entregado = bool(tg and chat and tg.enviar(chat, texto, botones=botones_comprado(b["id"])))
         if con_alarma:
             alarma(perfil["ntfy_tema"], decision.titulo, texto_alarma(b, mejor.precio_total, decision.motivo),
                    enlace=f"{url_web.rstrip('/')}/#/busqueda/{b['id']}" if url_web else None,
@@ -670,13 +731,8 @@ def ronda(db: Supabase, tg: Telegram | None, url_web: str | None, forzar: bool, 
     """Revisa las búsquedas a las que les toca. Devuelve el resumen, o None si no había nada que hacer."""
     ahora = datetime.now(timezone.utc)
     hoy = hoy_espana()
-    pendientes = []
-    for b in db.leer("busquedas", activa="eq.true"):
-        if _caducada(b, hoy):
-            db.actualizar("busquedas", {"id": f"eq.{b['id']}"}, {"activa": False, "estado": "Caducada: las fechas ya han pasado"})
-            continue
-        if forzar or _fecha_hora(b["proxima_revision"]) <= ahora:
-            pendientes.append(b)
+    pendientes = [b for b in quitar_lo_pasado(db, tg, db.leer("busquedas"), hoy)
+                  if b.get("activa") and (forzar or _fecha_hora(b["proxima_revision"]) <= ahora)]
     if not pendientes:
         return None
     # Primero las que más llevan esperando: con el máximo de consultas por hora ninguna se queda atrás
@@ -727,6 +783,8 @@ def ronda(db: Supabase, tg: Telegram | None, url_web: str | None, forzar: bool, 
                 log.error("Error con una búsqueda a cualquier destino: %s", type(e).__name__)
                 if isinstance(e, httpx.TransportError):
                     continue  # corte de red puntual: se reintenta en la siguiente vuelta, no es un fallo del código
+                if _ya_no_existe(db, b):
+                    continue  # la borraste mientras se revisaba: no es un fallo del código
                 problemas.append(f"Fallo del código con una búsqueda a cualquier destino: {_donde(e)}")
         _registrar_fuentes(estado, resultados)
         resumen["fuentes"] = estado
@@ -821,6 +879,8 @@ def ronda(db: Supabase, tg: Telegram | None, url_web: str | None, forzar: bool, 
                 resumen["errores"].append(f"{b.get('nombre')}: {type(e).__name__}: {e}"[:300])
                 if isinstance(e, httpx.TransportError):
                     continue  # corte de red puntual (p. ej. al guardar en Supabase): se reintenta en la siguiente vuelta
+                if _ya_no_existe(db, b):
+                    continue  # la borraste mientras se revisaba (p. ej. «ya he comprado»): no es un fallo del código
                 problemas.append(f"Fallo del código al procesar una búsqueda ({autoarreglo.forma_busqueda(b)}): {_donde(e)}")
         if con_google >= 3 and sin_vuelos == con_google:
             problemas.append(f"Google responde con su página de resultados, pero ninguna de las {con_google} búsquedas de "

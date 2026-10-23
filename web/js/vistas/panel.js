@@ -1,4 +1,5 @@
 import { api } from "../api.js";
+import { botonComprado, yaHeComprado } from "../comprado.js";
 import { miniGrafica } from "../graficas.js";
 import { icono } from "../iconos.js";
 import {
@@ -92,6 +93,7 @@ function tarjetaBusqueda(b, datos, mejor) {
         <a class="boton pequeno primario" href="#/busqueda/${b.id}">${icono("grafica")}En directo</a>
         <a class="boton pequeno" href="#/editar/${b.id}">${icono("editar")}Editar</a>
         <a class="boton pequeno fantasma" href="#/duplicar/${b.id}">${icono("duplicar")}Duplicar</a>
+        ${botonComprado(b, true)}
       </div>
     </article>`;
 }
@@ -180,8 +182,13 @@ export async function vistaPanel(app) {
   alSalir(() => graficas.forEach((g) => g?.destruir()));
 
   // Tiempo real: cada búsqueda revisada actualiza su tarjeta al momento
-  alSalir(api.suscribir("busquedas", ({ new: b }) => {
+  alSalir(api.suscribir("busquedas", ({ eventType, old, new: b }) => {
     tiempoRealActivo = true;
+    // Borrada (por el robot al llegar el día del viaje, o desde Telegram): fuera del panel
+    if (eventType === "DELETE") {
+      if (old?.id && app.querySelector(`[data-id="${old.id}"]`)) recargar();
+      return;
+    }
     const tarjeta = b && app.querySelector(`[data-id="${b.id}"]`);
     if (!tarjeta) return;
     const precioEl = tarjeta.querySelector("[data-precio]");
@@ -225,6 +232,12 @@ export async function vistaPanel(app) {
   // Respaldo por si el tiempo real no está activado en Supabase: recargar cada 2 minutos
   cadaSegundos(120, () => !tiempoRealActivo && recargar());
 
+  app.querySelectorAll("[data-comprado]").forEach((boton) =>
+    boton.addEventListener("click", async () => {
+      const b = busquedas.find((x) => x.id === boton.dataset.comprado);
+      if (b && await yaHeComprado(b)) recargar();
+    }),
+  );
   app.querySelectorAll("[data-pausar]").forEach((boton) =>
     boton.addEventListener("click", async () => {
       const b = busquedas.find((x) => x.id === boton.dataset.pausar);
