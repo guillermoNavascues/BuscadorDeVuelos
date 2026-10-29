@@ -498,6 +498,32 @@ def test_sin_vuelos_con_tus_filtros_no_es_un_fallo(monkeypatch):
     assert res.error and "cookies" in res.error
 
 
+def test_ida_y_vuelta_sin_datos_sigue_con_solo_ida(monkeypatch):
+    from types import SimpleNamespace
+
+    import pytest
+
+    from buscador.fuentes import google_flights as gf
+
+    b = busqueda()
+    g = gf.GoogleFlights.__new__(gf.GoogleFlights)  # sin red
+    monkeypatch.setattr(gf, "_a_trayecto", lambda r: r.tr)
+
+    def sin_datos(*_, **__):
+        raise gf.SinResultados("sin vuelos")
+    g._ida_y_vuelta = sin_datos
+    g._solo_ida = lambda b_, sentido, fecha, con_horas=True: [SimpleNamespace(
+        price=50, self_transfer=False,
+        tr=Trayecto([tramo("FR", "SVQ", "ORY", IDA) if sentido == "ida" else tramo("FR", "ORY", "SVQ", VUELTA)]))]
+    opciones = g.vuelos(b, date(2026, 11, 15), date(2026, 11, 19), Validador(b, AEROLINEAS))
+    assert [o.precio_billetes for o in opciones] == [100] and opciones[0].billetes_separados
+
+    # Si los de solo ida tampoco dan datos, el error sale (no se disimula un fallo de Google)
+    g._solo_ida = sin_datos
+    with pytest.raises(gf.SinResultados):
+        g.vuelos(b, date(2026, 11, 15), date(2026, 11, 19), Validador(b, AEROLINEAS))
+
+
 # ---------------- cualquier destino ----------------
 
 def _ida_vuelta(aero, o, d, precio, dia=13, fuente="ryanair"):

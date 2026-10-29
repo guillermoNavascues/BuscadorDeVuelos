@@ -355,7 +355,13 @@ class GoogleFlights:
         """Opciones concretas para unas fechas: ida y vuelta juntas y, además, dos billetes de solo ida."""
         opciones: list[Opcion] = []
         if fecha_vuelta:
-            opciones += self._ida_y_vuelta(b, fecha_ida, fecha_vuelta)
+            try:
+                opciones += self._ida_y_vuelta(b, fecha_ida, fecha_vuelta)
+            except SinResultados:
+                # Con 3 aeropuertos de salida Google no sirve la página de la vuelta (probado el 29/10/2026:
+                # con 1 o 2 sí). Los billetes de solo ida de abajo cubren la búsqueda; si tampoco hay datos
+                # allí, el error sale igualmente.
+                log.warning("Ida y vuelta juntas sin datos: se siguen buscando los billetes de solo ida")
 
         # Billetes de solo ida (y vuelta por separado): en low cost suele salir más barato
         validos: dict[str, list[tuple[float, object]]] = {}
